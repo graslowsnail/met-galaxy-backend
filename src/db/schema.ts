@@ -18,6 +18,7 @@ export const artworks = createTable("artwork", {
   date: varchar("date", { length: 200 }), // Increased from 100
   medium: text("medium"), // Changed from varchar(500) to text
   primaryImage: varchar("primaryImage", { length: 1000 }),
+  localImageUrl: varchar("localImageUrl", { length: 1000 }),
   department: varchar("department", { length: 300 }), // Increased from 200
   culture: varchar("culture", { length: 300 }), // Increased from 200
   createdAt: timestamp("createdAt", { withTimezone: true }),
