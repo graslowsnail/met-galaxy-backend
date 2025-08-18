@@ -93,49 +93,63 @@ Find artworks visually similar to a given artwork using CLIP embeddings.
 |-----------|------|-------------|
 | `id` | integer | ID of the artwork to find similar images for |
 
-**Query Parameters:**
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `count` | integer | 20 | Number of similar artworks to return (1-100) |
-| `threshold` | float | 0.8 | Similarity threshold (0.0-1.0, higher = more similar) |
+**Query Parameters:** None (fixed at 50 results)
 
 **Response Format:**
 ```json
 {
   "success": true,
-  "data": {
-    "sourceArtwork": {
-      "id": 1,
-      "title": "The Starry Night",
-      "artist": "Vincent van Gogh",
-      "imageUrl": "https://met-artworks-images.s3.amazonaws.com/artworks/1.jpg"
+  "data": [
+    {
+      "id": 123,
+      "objectId": 45678,
+      "title": "Starry Night",
+      "artist": "Vincent van Gogh", 
+      "imageUrl": "https://met-artworks-images.s3.amazonaws.com/artworks/123.jpg",
+      "originalImageUrl": "https://images.metmuseum.org/...",
+      "imageSource": "s3",
+      "original": true,
+      "similarity": 1.0
     },
-    "similarArtworks": [
-      {
-        "id": 156,
-        "title": "Wheatfield with Cypresses",
-        "artist": "Vincent van Gogh",
-        "imageUrl": "https://met-artworks-images.s3.amazonaws.com/artworks/156.jpg",
-        "similarity": 0.92,
-        "distance": 0.08
-      }
-    ]
-  },
+    {
+      "id": 124,
+      "objectId": 45679,
+      "title": "The Scream",
+      "artist": "Edvard Munch",
+      "imageUrl": "https://met-artworks-images.s3.amazonaws.com/artworks/124.jpg", 
+      "originalImageUrl": "https://images.metmuseum.org/...",
+      "imageSource": "s3",
+      "original": false,
+      "similarity": 0.92
+    }
+  ],
   "meta": {
-    "count": 20,
-    "threshold": 0.8,
-    "responseTime": "120ms"
+    "targetId": 123,
+    "targetTitle": "Starry Night",
+    "targetArtist": "Vincent van Gogh",
+    "count": 50,
+    "responseTime": "150ms"
   }
 }
 ```
 
+**Error Responses:**
+- `400`: Invalid artwork ID
+- `404`: Artwork not found or missing S3 image/embedding
+- `500`: Server error
+
+**Key Features:**
+- Uses cosine similarity with CLIP embeddings (`imgVec`)
+- Returns 50 results including the original artwork
+- Original artwork marked with `"original": true` for center display
+- Only returns artworks with S3-hosted images
+- Includes similarity scores (0-1, higher = more similar)
+- Results ordered by similarity (most similar first)
+
 **Example Requests:**
 ```bash
-# Find 20 similar artworks
-GET /api/artworks/similar/1
-
-# Find 10 very similar artworks
-GET /api/artworks/similar/1?count=10&threshold=0.9
+# Find 50 similar artworks to artwork ID 123
+GET /api/artworks/similar/123
 ```
 
 ---
