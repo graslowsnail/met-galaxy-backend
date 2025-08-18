@@ -1,12 +1,14 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import { db } from "./db/index.js";
+import { sql } from "drizzle-orm";
 
 // Load environment variables
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 
 // CORS configuration
 app.use(
@@ -52,6 +54,26 @@ app.get('/', (req, res) => {
 
 // API Routes
 // app.use('/api', yourRoutes)
+
+// Test database connection endpoint
+app.get('/api/test-db', async (req, res) => {
+  try {
+    // Simple query to test connection
+    const result = await db.execute(sql`SELECT NOW() as current_time`);
+    res.json({
+      success: true,
+      data: result[0],
+      message: 'Database connection successful!'
+    });
+  } catch (error) {
+    console.error('Database connection error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Database connection failed',
+      message: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
 
 // Start server
 app.listen(PORT, () => {
