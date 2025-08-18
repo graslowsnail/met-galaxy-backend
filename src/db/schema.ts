@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, pgTableCreator, text, integer, timestamp, varchar, boolean } from "drizzle-orm/pg-core";
+import { index, pgTableCreator, text, integer, timestamp, varchar, boolean, vector } from "drizzle-orm/pg-core";
 
 /**
  * This is an example of how to use the multi-project schema feature of Drizzle ORM. Use the same
@@ -19,6 +19,7 @@ export const artworks = createTable("artwork", {
   medium: text("medium"), // Changed from varchar(500) to text
   primaryImage: varchar("primaryImage", { length: 1000 }),
   localImageUrl: varchar("localImageUrl", { length: 1000 }),
+  imgVec: vector("imgVec", { dimensions: 768 }), // CLIP ViT-L/14 embeddings
   department: varchar("department", { length: 300 }), // Increased from 200
   culture: varchar("culture", { length: 300 }), // Increased from 200
   createdAt: timestamp("createdAt", { withTimezone: true }),

@@ -1,0 +1,1 @@
+ALTER TABLE "met-galaxy_artwork" ADD COLUMN "imgVec" vector(768);

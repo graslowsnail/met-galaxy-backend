@@ -8,6 +8,13 @@
       "when": 1755540675013,
       "tag": "0000_round_wendigo",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1755543767354,
+      "tag": "0001_milky_gamma_corps",
+      "breakpoints": true
     }
   ]
 }
