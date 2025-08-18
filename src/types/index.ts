@@ -11,5 +11,3 @@ export interface ApiResponse<T = any> {
 export interface CustomRequest extends Request {
     // Add custom properties here as needed
 }
-
-

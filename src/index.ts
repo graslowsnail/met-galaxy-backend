@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import { db } from "./db/index.js";
 import { sql } from "drizzle-orm";
+import artworksRouter from "./routes/artworks.js";
 
 // Load environment variables
 dotenv.config();
@@ -53,7 +54,7 @@ app.get('/', (req, res) => {
 });
 
 // API Routes
-// app.use('/api', yourRoutes)
+app.use('/api/artworks', artworksRouter);
 
 // Test database connection endpoint
 app.get('/api/test-db', async (req, res) => {
