@@ -149,6 +149,7 @@ def main():
         model, preprocess = load_clip_model()
         
         # Get artworks that need embeddings
+        batch_offset = int(os.getenv('BATCH_OFFSET', '0'))
         cursor.execute("""
             SELECT id, "localImageUrl" 
             FROM "met-galaxy_artwork" 
@@ -156,8 +157,9 @@ def main():
               AND "localImageUrl" != ''
               AND "imgVec" IS NULL
             ORDER BY id
-            LIMIT 1000
-        """)
+            OFFSET %(offset)s
+            LIMIT 7500
+        """, {'offset': batch_offset})
         
         artworks = cursor.fetchall()
         print(f"🎯 Found {len(artworks)} artworks to process")
