@@ -21,7 +21,7 @@ const getImageSource = (artwork: any) => {
   return null;
 };
 
-// GET /api/artworks/random - Optimized random artworks for grid
+// GET /api/artworks/random - Optimized random artworks for grid with STABLE ordering
 router.get('/random', async (req, res) => {
   const startTime = Date.now();
   
@@ -50,7 +50,8 @@ router.get('/random', async (req, res) => {
       })
       .from(artworks)
       .where(sql`"localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND "imgVec" IS NOT NULL`)
-      .orderBy(sql`RANDOM()`)
+      // CRITICAL FIX: Add deterministic secondary ordering by ID to ensure stable order
+      .orderBy(sql`RANDOM(), id ASC`)
       .limit(count);
 
     console.log(`Database query returned ${result.length} results`);
