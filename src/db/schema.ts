@@ -39,5 +39,6 @@ export const artworks = createTable("artwork", {
     .notNull(),
 });
 
+
 // Export the schema for drizzle-kit
 export * from 'drizzle-orm/pg-core';

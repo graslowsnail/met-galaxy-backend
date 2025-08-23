@@ -98,7 +98,7 @@ router.get('/similar/:id', async (req, res) => {
     console.log('Starting /similar endpoint...');
     
     const artworkId = parseInt(req.params.id);
-    const count = 50; // Fixed at 50 as requested
+    const count = 160; // Fixed at 50 as requested
     
     if (!artworkId || artworkId <= 0) {
       return res.status(400).json({

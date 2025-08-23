@@ -4,9 +4,19 @@ import dotenv from "dotenv";
 import { db } from "./db/index.js";
 import { sql } from "drizzle-orm";
 import artworksRouter from "./routes/artworks.js";
+import fieldChunkRouter from "./routes/fieldChunk.js";
+import { loadPCABasisFromFile } from "./lib/fieldVectors.js";
 
 // Load environment variables
 dotenv.config();
+
+// Initialize PCA basis at startup
+try {
+  loadPCABasisFromFile();
+} catch (error) {
+  console.error("⚠️  Warning: Could not load PCA basis file. Field-chunk endpoint will not work until pca_basis.json is generated.");
+  console.error("Run the Python script scripts/pca_build.py to generate the required file.");
+}
 
 const app = express();
 const PORT = process.env.PORT || 8080;
@@ -55,6 +65,7 @@ app.get('/', (req, res) => {
 
 // API Routes
 app.use('/api/artworks', artworksRouter);
+app.use('/api/artworks', fieldChunkRouter);
 
 // Test database connection endpoint
 app.get('/api/test-db', async (req, res) => {
