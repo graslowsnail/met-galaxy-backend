@@ -51,6 +51,7 @@ router.get('/random', async (req, res) => {
         localImageUrl: artworks.localImageUrl,
         primaryImage: artworks.primaryImage,
         primaryImageSmall: artworks.primaryImageSmall,
+        objectUrl: artworks.objectUrl,
       })
       .from(artworks)
       .where(sql`"localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND "imgVec" IS NOT NULL`)
@@ -73,6 +74,7 @@ router.get('/random', async (req, res) => {
       imageUrl: getImageUrl(artwork),
       originalImageUrl: artwork.primaryImage,
       imageSource: getImageSource(artwork),
+      objectUrl: artwork.objectUrl,
       hasEmbedding: true, // Always true since we filter for imgVec
     }));
 

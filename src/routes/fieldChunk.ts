@@ -239,7 +239,12 @@ router.post("/field-chunks", async (req, res) => {
 
     // Global exclusion set
     const globalExcludes = new Set<number>([targetId, ...actualExcludeIds]);
-    const globalUsed = new Set<number>(globalExcludes);
+    const globalUsed = new Set<number>(globalExcludes); // Track used IDs across all chunks
+    
+    // Build SQL exclusion clause
+    const excludeClause = globalExcludes.size > 0 
+      ? sql`AND id NOT IN (${sql.join(Array.from(globalExcludes), sql`, `)})`
+      : sql``;
 
     // Sort chunks by distance for better similarity distribution
     const sortedChunks = chunks.map((chunk, index) => ({
@@ -262,7 +267,7 @@ router.post("/field-chunks", async (req, res) => {
       localImageUrl: artworks.localImageUrl, primaryImage: artworks.primaryImage, primaryImageSmall: artworks.primaryImageSmall,
       sim: sql<number>`1 - ("imgVec" <=> ${vStr}::vector)`
     }).from(artworks)
-     .where(sql`"imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND ${notTarget}`)
+     .where(sql`"imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND ${notTarget} ${excludeClause}`)
      .orderBy(sql`"imgVec" <=> ${vStr}::vector`)
      .limit(simTightLimit);
 
@@ -296,7 +301,7 @@ router.post("/field-chunks", async (req, res) => {
         localImageUrl: artworks.localImageUrl, primaryImage: artworks.primaryImage, primaryImageSmall: artworks.primaryImageSmall,
         sim: sql<number>`1 - ("imgVec" <=> ${vpStr}::vector)`
       }).from(artworks)
-       .where(sql`"imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND ${notTarget}`)
+       .where(sql`"imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND ${notTarget} ${excludeClause}`)
        .orderBy(sql`"imgVec" <=> ${vpStr}::vector`)
        .limit(Math.min(400, simDriftLimit));
 
@@ -306,7 +311,7 @@ router.post("/field-chunks", async (req, res) => {
         id: artworks.id, objectId: artworks.objectId, title: artworks.title, artist: artworks.artist,
         localImageUrl: artworks.localImageUrl, primaryImage: artworks.primaryImage, primaryImageSmall: artworks.primaryImageSmall
       }).from(artworks)
-       .where(sql`"imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND ${notTarget}`)
+       .where(sql`"imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND ${notTarget} ${excludeClause}`)
        .orderBy(sql`RANDOM(), id ASC`)
        .limit(Math.min(800, randLimit));
 
@@ -333,7 +338,7 @@ router.post("/field-chunks", async (req, res) => {
       const sum = wSim + wDrift + wRand || 1;
       const pSim = wSim / sum, pDrift = wDrift / sum;
 
-      // Selection logic with global deduplication
+      // Selection logic - DB excludes global list, we need both chunk and cross-chunk deduplication
       const chunkUsed = new Set<number>(globalUsed);
       const chunkOut: any[] = [];
 
@@ -360,7 +365,7 @@ router.post("/field-chunks", async (req, res) => {
         if (!cand) break;
         
         chunkUsed.add(cand.id);
-        globalUsed.add(cand.id); // Update global used set
+        globalUsed.add(cand.id); // Update global used set for cross-chunk deduplication
         chunkOut.push(cand);
       }
 
