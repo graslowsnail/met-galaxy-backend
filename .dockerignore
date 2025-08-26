@@ -1,0 +1,61 @@
+# Dependencies
+node_modules
+npm-debug.log*
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+
+# TypeScript source will be compiled in builder stage, not needed in final image
+
+# Development files
+*.md
+README*
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+logs
+*.log
+
+# Coverage
+coverage/
+
+# Test files
+test/
+tests/
+__tests__/
+*.test.*
+*.spec.*
+
+# Temporary files
+tmp/
+temp/
+
+# Python virtual environment and scripts
+venv/
+scripts/
+*.py
+*.pyc
+
+# Don't ignore these essential files:
+# pca_basis.json (needed for field-chunk API)
+# drizzle/ (needed for migrations)
+# package*.json (needed for dependencies)
+# dist/ (compiled JavaScript - copied from builder stage)
