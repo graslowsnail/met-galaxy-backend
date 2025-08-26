@@ -31,7 +31,7 @@ app.use(
             "http://localhost:3001",
             "http://127.0.0.1:3000",
           ]
-        : process.env.CORS_ORIGINS?.split(',') || ["https://www.openmetropolitan.com"],
+        : process.env.CORS_ORIGINS?.split(',') || ["https://openmetropolitan.com"],
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
