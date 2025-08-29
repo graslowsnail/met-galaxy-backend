@@ -89,7 +89,7 @@ router.get('/random', async (req, res) => {
     });
 
   } catch (error) {
-    console.error(`❌ [RANDOM] Request failed after ${Date.now() - startTime}ms:`, error.message);
+    console.error(`❌ [RANDOM] Request failed after ${Date.now() - startTime}ms:`, error instanceof Error ? error.message : 'Unknown error');
     res.status(500).json({
       success: false,
       error: 'Failed to fetch random artworks',
@@ -190,7 +190,7 @@ router.get('/similar/:id', async (req, res) => {
     });
 
   } catch (error) {
-    console.error(`❌ [SIMILAR] Request failed after ${Date.now() - startTime}ms:`, error.message);
+    console.error(`❌ [SIMILAR] Request failed after ${Date.now() - startTime}ms:`, error instanceof Error ? error.message : 'Unknown error');
     res.status(500).json({
       success: false,
       error: 'Failed to fetch similar artworks',
@@ -213,7 +213,7 @@ router.get('/', async (req, res) => {
       message: 'Artworks retrieved successfully'
     });
   } catch (error) {
-    console.error(`❌ [LEGACY] Request failed:`, error.message);
+    console.error(`❌ [LEGACY] Request failed:`, error instanceof Error ? error.message : 'Unknown error');
     res.status(500).json({
       success: false,
       error: 'Failed to fetch artworks',
