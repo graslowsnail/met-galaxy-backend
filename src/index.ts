@@ -69,16 +69,18 @@ app.use('/api/artworks', fieldChunkRouter);
 
 // Test database connection endpoint
 app.get('/api/test-db', async (req, res) => {
+  const start = Date.now();
   try {
     // Simple query to test connection
     const result = await db.execute(sql`SELECT NOW() as current_time`);
+    console.log(`📊 [TEST-DB] Connection successful | ${Date.now() - start}ms`);
     res.json({
       success: true,
       data: result[0],
       message: 'Database connection successful!'
     });
   } catch (error) {
-    console.error('Database connection error:', error);
+    console.error(`❌ [TEST-DB] Connection failed | ${Date.now() - start}ms:`, error instanceof Error ? error.message : 'Unknown error');
     res.status(500).json({
       success: false,
       error: 'Database connection failed',
@@ -90,11 +92,16 @@ app.get('/api/test-db', async (req, res) => {
 // Start server
 app.listen(PORT, () => {
   console.log(`
-    🚀 API Server Started!
+    🚀 [${new Date().toISOString()}] API Server Started!
     
-    📍 Server running on: http://localhost:${PORT}
-    🏥 Health Check: http://localhost:${PORT}/health
+    📍 Server: http://localhost:${PORT}
+    🏥 Health: http://localhost:${PORT}/health
     🌍 Environment: ${process.env.NODE_ENV || "development"}
+    🎯 Endpoints:
+       GET  /api/artworks/random
+       GET  /api/artworks/similar/:id
+       GET  /api/artworks/field-chunk
+       POST /api/artworks/field-chunks
   `);
 });
 

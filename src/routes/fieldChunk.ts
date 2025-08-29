@@ -152,6 +152,9 @@ router.get("/field-chunk", async (req, res) => {
       source: p.source
     }));
 
+    const responseTime = Date.now() - start;
+    console.log(`🌌 [FIELD-CHUNK] ${data.length} artworks | (${chunkX},${chunkY}) r=${Math.round(r * 100) / 100} | ${responseTime}ms`);
+    
     res.json({
       success: true,
       meta: { 
@@ -168,10 +171,10 @@ router.get("/field-chunk", async (req, res) => {
         seed 
       },
       data,
-      responseTime: `${Date.now() - start}ms`
+      responseTime: `${responseTime}ms`
     });
   } catch (err: any) {
-    console.error('field-chunk error', err);
+    console.error(`❌ [FIELD-CHUNK] Request failed after ${Date.now() - start}ms:`, err.message);
     res.status(500).json({ success: false, error: 'field-chunk failed', message: err.message });
   }
 });
@@ -232,7 +235,7 @@ router.post("/field-chunks", async (req, res) => {
         error: "Target artwork not found",
         targetId 
       });
-    }
+    };
 
     const v = normalize(Float32Array.from(target.imgVec as number[]));
     const d = v.length;
@@ -401,6 +404,10 @@ router.post("/field-chunks", async (req, res) => {
     }
 
     // Response
+    const responseTime = Date.now() - start;
+    const totalArtworks = Object.values(results).reduce((sum: number, chunk: any) => sum + chunk.artworks.length, 0);
+    console.log(`🌌 [FIELD-CHUNKS] ${totalArtworks} artworks across ${chunks.length} chunks | ${responseTime}ms`);
+    
     res.json({
       success: true,
       meta: {
@@ -411,11 +418,11 @@ router.post("/field-chunks", async (req, res) => {
         t: Math.round(overallT * 100) / 100
       },
       data: results,
-      responseTime: `${Date.now() - start}ms`
+      responseTime: `${responseTime}ms`
     });
 
   } catch (err: any) {
-    console.error('field-chunks error', err);
+    console.error(`❌ [FIELD-CHUNKS] Request failed after ${Date.now() - start}ms:`, err.message);
     res.status(500).json({ 
       success: false, 
       error: 'Database query failed', 

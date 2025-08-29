@@ -26,14 +26,12 @@ router.get('/random', async (req, res) => {
   const startTime = Date.now();
   
   try {
-    console.log('Starting /random endpoint...');
     
     // Parse and validate query parameters
     const count = Math.min(Math.max(parseInt(req.query.count as string) || 5, 1), 500);
     const seed = parseInt(req.query.seed as string) || Math.floor(Math.random() * 1000000);
     const withImages = req.query.withImages !== 'false'; // Default true
     
-    console.log(`Requesting ${count} artworks with seed ${seed}`);
 
     // Use seed for consistent randomization - set seed first, then random order
     await db.execute(sql`SELECT setseed(${seed / 1000000.0})`);
@@ -59,7 +57,7 @@ router.get('/random', async (req, res) => {
       .orderBy(sql`RANDOM(), id ASC`)
       .limit(count);
 
-    console.log(`Database query returned ${result.length} results`);
+    console.log(`🎲 [RANDOM] ${result.length} artworks | seed=${seed} | ${Date.now() - startTime}ms`);
 
     // Transform the data to match API spec
     const transformedData = result.map(artwork => ({
@@ -91,7 +89,7 @@ router.get('/random', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching random artworks:', error);
+    console.error(`❌ [RANDOM] Request failed after ${Date.now() - startTime}ms:`, error.message);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch random artworks',
@@ -105,7 +103,6 @@ router.get('/similar/:id', async (req, res) => {
   const startTime = Date.now();
   
   try {
-    console.log('Starting /similar endpoint...');
     
     const artworkId = parseInt(req.params.id);
     const count = 160; // Fixed at 50 as requested
@@ -117,7 +114,6 @@ router.get('/similar/:id', async (req, res) => {
       });
     }
     
-    console.log(`Finding ${count} similar artworks to ID ${artworkId}`);
 
     // First, get the target artwork and its embedding
     const targetArtwork = await db
@@ -143,11 +139,9 @@ router.get('/similar/:id', async (req, res) => {
     }
 
     const target = targetArtwork[0];
-    console.log(`Target artwork found: "${target.title}" by ${target.artist}`);
 
     // Convert the target embedding to a string format for PostgreSQL
     const targetVectorString = `[${target.imgVec!.join(',')}]`;
-    console.log(`Target vector length: ${target.imgVec!.length}`);
 
     // Find similar artworks using cosine similarity
     const similarArtworks = await db
@@ -166,7 +160,7 @@ router.get('/similar/:id', async (req, res) => {
       .orderBy(sql`"imgVec" <=> ${targetVectorString}::vector`)
       .limit(count);
 
-    console.log(`Database query returned ${similarArtworks.length} results`);
+    console.log(`🔍 [SIMILAR] ${similarArtworks.length} artworks for ID ${artworkId} | ${Date.now() - startTime}ms`);
 
     // Transform the data and mark the original
     const transformedData = similarArtworks.map(artwork => ({
@@ -196,7 +190,7 @@ router.get('/similar/:id', async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error fetching similar artworks:', error);
+    console.error(`❌ [SIMILAR] Request failed after ${Date.now() - startTime}ms:`, error.message);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch similar artworks',
@@ -219,7 +213,7 @@ router.get('/', async (req, res) => {
       message: 'Artworks retrieved successfully'
     });
   } catch (error) {
-    console.error('Error fetching artworks:', error);
+    console.error(`❌ [LEGACY] Request failed:`, error.message);
     res.status(500).json({
       success: false,
       error: 'Failed to fetch artworks',
