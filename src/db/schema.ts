@@ -20,6 +20,7 @@ export const artworks = createTable("artwork", {
   primaryImage: varchar("primaryImage", { length: 1000 }),
   localImageUrl: varchar("localImageUrl", { length: 1000 }),
   imgVec: vector("imgVec", { dimensions: 768 }), // CLIP ViT-L/14 embeddings
+  txtVec: vector("txtVec", { dimensions: 1536 }), // Text embeddings for metadata search
   department: varchar("department", { length: 300 }), // Increased from 200
   culture: varchar("culture", { length: 300 }), // Increased from 200
   createdAt: timestamp("createdAt", { withTimezone: true }),
