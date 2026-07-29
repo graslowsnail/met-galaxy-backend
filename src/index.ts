@@ -5,6 +5,7 @@ import { db } from "./db/index.js";
 import { sql } from "drizzle-orm";
 import artworksRouter from "./routes/artworks.js";
 import fieldChunkRouter from "./routes/fieldChunk.js";
+import searchRouter from "./routes/search.js";
 import { loadPCABasisFromFile } from "./lib/fieldVectors.js";
 
 // Load environment variables
@@ -66,6 +67,7 @@ app.get('/', (req, res) => {
 // API Routes
 app.use('/api/artworks', artworksRouter);
 app.use('/api/artworks', fieldChunkRouter);
+app.use('/api/artworks', searchRouter);
 
 // Test database connection endpoint
 app.get('/api/test-db', async (req, res) => {
@@ -102,6 +104,7 @@ app.listen(PORT, () => {
        GET  /api/artworks/similar/:id
        GET  /api/artworks/field-chunk
        POST /api/artworks/field-chunks
+       GET  /api/artworks/search?q=...
   `);
 });
 

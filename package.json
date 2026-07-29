@@ -12,7 +12,8 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "download-images": "node scripts/download-images.js",
-    "generate-embeddings": "source venv/bin/activate && python scripts/generate-embeddings.py"
+    "generate-embeddings": "source venv/bin/activate && python scripts/generate-embeddings.py",
+    "generate-text-embeddings": "venv/bin/python -u scripts/generate-text-embeddings.py"
   },
   "keywords": [],
   "author": "",
@@ -22,6 +23,7 @@
     "dotenv": "^16.5.0",
     "drizzle-orm": "^0.44.4",
     "express": "^5.1.0",
+    "openai": "^6.25.0",
     "pg": "^8.16.3",
     "postgres": "^3.4.4"
   },

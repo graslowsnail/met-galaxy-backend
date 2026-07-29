@@ -12,6 +12,7 @@
    docker run -p 8080:8080 \
      -e NODE_ENV=production \
      -e DATABASE_URL="your_neon_database_url" \
+     -e OPENAI_API_KEY="your_openai_api_key" \
      -e AWS_ACCESS_KEY_ID="your_aws_key" \
      -e AWS_SECRET_ACCESS_KEY="your_aws_secret" \
      -e CORS_ORIGINS="https://your-frontend.com" \
@@ -27,6 +28,7 @@
 
 **Environment variables needed:**
 - `DATABASE_URL` - Your Neon PostgreSQL connection string
+- `OPENAI_API_KEY` - OpenAI API key for text-query embeddings
 - `AWS_ACCESS_KEY_ID` - AWS access key for S3
 - `AWS_SECRET_ACCESS_KEY` - AWS secret key
 - `CORS_ORIGINS` - Comma-separated frontend URLs
@@ -36,6 +38,7 @@
 # Install flyctl and login
 fly launch
 fly secrets set DATABASE_URL="your_neon_url"
+fly secrets set OPENAI_API_KEY="your_openai_api_key"
 fly secrets set AWS_ACCESS_KEY_ID="your_key"
 fly secrets set AWS_SECRET_ACCESS_KEY="your_secret"
 fly secrets set CORS_ORIGINS="https://your-frontend.com"
@@ -62,6 +65,7 @@ Copy `.env.example` to set up your production environment:
 NODE_ENV=production
 PORT=8080
 DATABASE_URL=postgresql://user:pass@host:port/db?sslmode=require
+OPENAI_API_KEY=your_openai_api_key
 AWS_ACCESS_KEY_ID=your_aws_access_key_id
 AWS_SECRET_ACCESS_KEY=your_aws_secret_access_key
 CORS_ORIGINS=https://your-frontend.com,https://admin.your-site.com
@@ -83,6 +87,9 @@ The container includes a health check endpoint at `/health`. Most platforms will
 **Container fails to start:**
 - Check DATABASE_URL is correct and accessible
 - Ensure pca_basis.json exists (should be automatic)
+
+**Search returns a configuration error:**
+- Check OPENAI_API_KEY is set in the deployment environment
 
 **API returns CORS errors:**
 - Verify CORS_ORIGINS matches your frontend domain
