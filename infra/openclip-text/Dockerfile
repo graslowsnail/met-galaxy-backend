@@ -16,4 +16,4 @@ COPY scripts/openclip_text_service.py .
 
 EXPOSE 8090
 
-CMD ["python", "/app/openclip_text_service.py", "--host", "0.0.0.0", "--device", "cpu"]
+CMD ["python", "/app/openclip_text_service.py", "--host", "::", "--device", "cpu"]

@@ -4,6 +4,7 @@ import argparse
 import hmac
 import json
 import os
+import socket
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -16,6 +17,14 @@ load_dotenv()
 MAX_REQUEST_BYTES = 16 * 1024
 MAX_TEXT_LENGTH = 500
 MAX_BATCH_SIZE = 32
+
+
+class DualStackThreadingHTTPServer(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+    def server_bind(self):
+        self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
 
 
 def resolve_device(configured):
@@ -176,7 +185,12 @@ def main():
         max(1, int(os.getenv("OPENCLIP_TORCH_THREADS", "4")))
     )
     encoder = TextEncoder(args.model, args.pretrained, args.device)
-    server = ThreadingHTTPServer(
+    server_class = (
+        DualStackThreadingHTTPServer
+        if ":" in args.host
+        else ThreadingHTTPServer
+    )
+    server = server_class(
         (args.host, args.port),
         handler_class(
             encoder,
