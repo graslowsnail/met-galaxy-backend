@@ -2,24 +2,9 @@ import { Router } from 'express';
 import { db } from '../db/index.js';
 import { artworks, imageAssets } from '../db/schema.js';
 import { sql } from 'drizzle-orm';
+import { getFullImageUrl, getGraphImageUrl, getImageSource } from '../lib/imageUrls.js';
 
 const router = Router();
-
-// Helper function to determine image URL priority
-const getImageUrl = (artwork: any) => {
-  if (artwork.localImageUrl) return artwork.localImageUrl;
-  if (artwork.primaryImageSmall) return artwork.primaryImageSmall;
-  if (artwork.primaryImage) return artwork.primaryImage;
-  return null;
-};
-
-// Helper function to determine image source
-const getImageSource = (artwork: any) => {
-  if (artwork.localImageUrl) return 's3';
-  if (artwork.primaryImageSmall) return 'met_small';
-  if (artwork.primaryImage) return 'met_original';
-  return null;
-};
 
 // GET /api/artworks/random - Optimized random artworks for grid with STABLE ordering
 router.get('/random', async (req, res) => {
@@ -83,8 +68,8 @@ router.get('/random', async (req, res) => {
       department: artwork.department,
       creditLine: artwork.creditLine,
       description: artwork.description,
-      imageUrl: getImageUrl(artwork),
-      originalImageUrl: artwork.primaryImage,
+      imageUrl: getGraphImageUrl(artwork),
+      originalImageUrl: getFullImageUrl(artwork),
       imageSource: getImageSource(artwork),
       objectUrl: artwork.objectUrl,
       hasEmbedding: true, // Always true since we filter for imgVec
@@ -236,8 +221,8 @@ router.get('/similar/:id', async (req, res) => {
       objectId: artwork.objectId,
       title: artwork.title,
       artist: artwork.artist,
-      imageUrl: getImageUrl(artwork),
-      originalImageUrl: artwork.primaryImage,
+      imageUrl: getGraphImageUrl(artwork),
+      originalImageUrl: getFullImageUrl(artwork),
       imageSource: getImageSource(artwork),
       original: false,
       similarity: artwork.similarity,

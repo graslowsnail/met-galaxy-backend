@@ -2,6 +2,7 @@ import { Router } from "express";
 import { sql } from "drizzle-orm";
 import OpenAI from "openai";
 import { db } from "../db/index.js";
+import { getFullImageUrl, getGraphImageUrl } from "../lib/imageUrls.js";
 
 const router = Router();
 
@@ -640,8 +641,8 @@ router.get("/search", async (req, res) => {
         medium: artwork.medium,
         creditLine: artwork.creditLine,
         description: artwork.description,
-        imageUrl: artwork.localImageUrl,
-        originalImageUrl: artwork.primaryImage,
+        imageUrl: getGraphImageUrl(artwork),
+        originalImageUrl: getFullImageUrl(artwork),
         imageSource: "s3",
         objectUrl: artwork.objectUrl,
         similarity:

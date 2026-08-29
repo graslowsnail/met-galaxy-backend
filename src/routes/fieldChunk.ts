@@ -2,15 +2,13 @@ import { Router } from "express";
 import { db } from "../db/index.js";
 import { artworks, imageAssets } from "../db/schema.js";
 import { sql } from "drizzle-orm";
+import { getFullImageUrl, getGraphImageUrl, getImageSource } from "../lib/imageUrls.js";
 import {
   hash32, mulberry32, gaussianVector, lerp, smoothstep,
   add, scale, normalize, pcaDirectionalBias
 } from "../lib/fieldVectors.js";
 
 const router = Router();
-
-const getImageUrl = (a: any) => a.localImageUrl || a.primaryImageSmall || a.primaryImage || null;
-const getImageSource = (a: any) => a.localImageUrl ? "s3" : (a.primaryImageSmall ? "met_small" : (a.primaryImage ? "met_original" : null));
 
 const seedToPgFloat = (seed: number) => (seed >>> 0) / 4294967296;
 
@@ -247,8 +245,8 @@ router.get("/field-chunk", async (req, res) => {
       objectId: p.objectId,
       title: p.title,
       artist: p.artist,
-      imageUrl: getImageUrl(p),
-      originalImageUrl: p.primaryImage,
+      imageUrl: getGraphImageUrl(p),
+      originalImageUrl: getFullImageUrl(p),
       imageSource: getImageSource(p),
       similarity: typeof p.sim === 'number' ? p.sim : null,
       source: p.source
@@ -483,8 +481,8 @@ router.post("/field-chunks", async (req, res) => {
         objectId: p.objectId,
         title: p.title,
         artist: p.artist,
-        imageUrl: getImageUrl(p),
-        originalImageUrl: p.primaryImage,
+        imageUrl: getGraphImageUrl(p),
+        originalImageUrl: getFullImageUrl(p),
         imageSource: getImageSource(p),
         similarity: typeof p.sim === 'number' ? p.sim : null,
         source: p.source
