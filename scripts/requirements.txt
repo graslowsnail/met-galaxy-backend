@@ -5,12 +5,19 @@ transformers>=4.30.0
 
 # Image processing
 Pillow>=9.5.0
+ImageHash>=4.3.2
+scikit-image>=0.26.0
 
 # Database
 psycopg2-binary>=2.9.6
+
+# AWS
+boto3>=1.40.0
+botocore[crt]>=1.40.0
 
 # Utilities
 requests>=2.31.0
 python-dotenv>=1.0.0
 numpy>=1.24.0
 scikit-learn>=1.3.0
+openai==2.50.0

@@ -1,0 +1,1285 @@
+{
+  "id": "16a6b3b3-689c-4da0-82a4-dc8c52de2f32",
+  "prevId": "09d235a8-9e3f-4054-b500-ec24f26de082",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.met-galaxy_artwork": {
+      "name": "met-galaxy_artwork",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "objectId": {
+          "name": "objectId",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "title": {
+          "name": "title",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "artist": {
+          "name": "artist",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "date": {
+          "name": "date",
+          "type": "varchar(200)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "medium": {
+          "name": "medium",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "primaryImage": {
+          "name": "primaryImage",
+          "type": "varchar(1000)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "localImageUrl": {
+          "name": "localImageUrl",
+          "type": "varchar(1000)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "imageAssetId": {
+          "name": "imageAssetId",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "imageDuplicateState": {
+          "name": "imageDuplicateState",
+          "type": "image_association_duplicate_state",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "imgVec": {
+          "name": "imgVec",
+          "type": "vector(768)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "txtVec": {
+          "name": "txtVec",
+          "type": "vector(1536)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "txtVecAttemptCount": {
+          "name": "txtVecAttemptCount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "txtVecNextAttemptAt": {
+          "name": "txtVecNextAttemptAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "txtVecLeaseOwner": {
+          "name": "txtVecLeaseOwner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "txtVecLeaseExpiresAt": {
+          "name": "txtVecLeaseExpiresAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "txtVecLastError": {
+          "name": "txtVecLastError",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "department": {
+          "name": "department",
+          "type": "varchar(300)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "culture": {
+          "name": "culture",
+          "type": "varchar(300)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "additionalImages": {
+          "name": "additionalImages",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "objectUrl": {
+          "name": "objectUrl",
+          "type": "varchar(1000)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "isHighlight": {
+          "name": "isHighlight",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "artistDisplayBio": {
+          "name": "artistDisplayBio",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "objectBeginDate": {
+          "name": "objectBeginDate",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "objectEndDate": {
+          "name": "objectEndDate",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "creditLine": {
+          "name": "creditLine",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "classification": {
+          "name": "classification",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "artistNationality": {
+          "name": "artistNationality",
+          "type": "varchar(500)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "primaryImageSmall": {
+          "name": "primaryImageSmall",
+          "type": "varchar(1000)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "importedAt": {
+          "name": "importedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "idx_artworks_image_asset_id": {
+          "name": "idx_artworks_image_asset_id",
+          "columns": [
+            {
+              "expression": "imageAssetId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_artworks_txt_vec_queue": {
+          "name": "idx_artworks_txt_vec_queue",
+          "columns": [
+            {
+              "expression": "txtVecAttemptCount",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "txtVecNextAttemptAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "txtVecLeaseExpiresAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "met-galaxy_artwork_imageAssetId_met-galaxy_image_asset_id_fk": {
+          "name": "met-galaxy_artwork_imageAssetId_met-galaxy_image_asset_id_fk",
+          "tableFrom": "met-galaxy_artwork",
+          "tableTo": "met-galaxy_image_asset",
+          "columnsFrom": [
+            "imageAssetId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chk_artworks_txt_vec_attempt_count": {
+          "name": "chk_artworks_txt_vec_attempt_count",
+          "value": "\"met-galaxy_artwork\".\"txtVecAttemptCount\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.met-galaxy_image_asset": {
+      "name": "met-galaxy_image_asset",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "fullS3Key": {
+          "name": "fullS3Key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "thumbnailS3Key": {
+          "name": "thumbnailS3Key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "mimeType": {
+          "name": "mimeType",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "width": {
+          "name": "width",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "height": {
+          "name": "height",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "byteSize": {
+          "name": "byteSize",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "encodedSha256": {
+          "name": "encodedSha256",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "thumbnailEncodedSha256": {
+          "name": "thumbnailEncodedSha256",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "normalizedPixelSha256": {
+          "name": "normalizedPixelSha256",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "perceptualHash": {
+          "name": "perceptualHash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "perceptualHashAlgorithm": {
+          "name": "perceptualHashAlgorithm",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "differenceHash": {
+          "name": "differenceHash",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "differenceHashAlgorithm": {
+          "name": "differenceHashAlgorithm",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "thumbnailByteSize": {
+          "name": "thumbnailByteSize",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "processingStatus": {
+          "name": "processingStatus",
+          "type": "image_asset_processing_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending_upload'"
+        },
+        "processingAttemptCount": {
+          "name": "processingAttemptCount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "processingNextAttemptAt": {
+          "name": "processingNextAttemptAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "processingLeaseOwner": {
+          "name": "processingLeaseOwner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "processingLeaseExpiresAt": {
+          "name": "processingLeaseExpiresAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "imageEmbedding": {
+          "name": "imageEmbedding",
+          "type": "vector(768)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lastError": {
+          "name": "lastError",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "idx_image_assets_processing_queue": {
+          "name": "idx_image_assets_processing_queue",
+          "columns": [
+            {
+              "expression": "processingStatus",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "processingNextAttemptAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "met-galaxy_image_asset_fullS3Key_unique": {
+          "name": "met-galaxy_image_asset_fullS3Key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "fullS3Key"
+          ]
+        },
+        "met-galaxy_image_asset_thumbnailS3Key_unique": {
+          "name": "met-galaxy_image_asset_thumbnailS3Key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "thumbnailS3Key"
+          ]
+        },
+        "met-galaxy_image_asset_encodedSha256_unique": {
+          "name": "met-galaxy_image_asset_encodedSha256_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "encodedSha256"
+          ]
+        },
+        "met-galaxy_image_asset_normalizedPixelSha256_unique": {
+          "name": "met-galaxy_image_asset_normalizedPixelSha256_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "normalizedPixelSha256"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "chk_image_assets_processing_attempt_count": {
+          "name": "chk_image_assets_processing_attempt_count",
+          "value": "\"met-galaxy_image_asset\".\"processingAttemptCount\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.met-galaxy_image_duplicate_candidate": {
+      "name": "met-galaxy_image_duplicate_candidate",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "imageAssetAId": {
+          "name": "imageAssetAId",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "imageAssetBId": {
+          "name": "imageAssetBId",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "image_duplicate_candidate_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'review_candidate'"
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "reviewedAt": {
+          "name": "reviewedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "perceptualHashDistance": {
+          "name": "perceptualHashDistance",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "differenceHashDistance": {
+          "name": "differenceHashDistance",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "uq_image_duplicate_candidate_pair": {
+          "name": "uq_image_duplicate_candidate_pair",
+          "columns": [
+            {
+              "expression": "imageAssetAId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "imageAssetBId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_image_duplicate_candidate_status": {
+          "name": "idx_image_duplicate_candidate_status",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "met-galaxy_image_duplicate_candidate_imageAssetAId_met-galaxy_image_asset_id_fk": {
+          "name": "met-galaxy_image_duplicate_candidate_imageAssetAId_met-galaxy_image_asset_id_fk",
+          "tableFrom": "met-galaxy_image_duplicate_candidate",
+          "tableTo": "met-galaxy_image_asset",
+          "columnsFrom": [
+            "imageAssetAId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "met-galaxy_image_duplicate_candidate_imageAssetBId_met-galaxy_image_asset_id_fk": {
+          "name": "met-galaxy_image_duplicate_candidate_imageAssetBId_met-galaxy_image_asset_id_fk",
+          "tableFrom": "met-galaxy_image_duplicate_candidate",
+          "tableTo": "met-galaxy_image_asset",
+          "columnsFrom": [
+            "imageAssetBId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chk_image_duplicate_candidate_order": {
+          "name": "chk_image_duplicate_candidate_order",
+          "value": "\"met-galaxy_image_duplicate_candidate\".\"imageAssetAId\" < \"met-galaxy_image_duplicate_candidate\".\"imageAssetBId\""
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.met-galaxy_image_embedding_outbox": {
+      "name": "met-galaxy_image_embedding_outbox",
+      "schema": "",
+      "columns": {
+        "imageAssetId": {
+          "name": "imageAssetId",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "image_embedding_outbox_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "attemptCount": {
+          "name": "attemptCount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "nextAttemptAt": {
+          "name": "nextAttemptAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "messageId": {
+          "name": "messageId",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lastError": {
+          "name": "lastError",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "dispatchedAt": {
+          "name": "dispatchedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "idx_image_embedding_outbox_dispatch": {
+          "name": "idx_image_embedding_outbox_dispatch",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "nextAttemptAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "met-galaxy_image_embedding_outbox_imageAssetId_met-galaxy_image_asset_id_fk": {
+          "name": "met-galaxy_image_embedding_outbox_imageAssetId_met-galaxy_image_asset_id_fk",
+          "tableFrom": "met-galaxy_image_embedding_outbox",
+          "tableTo": "met-galaxy_image_asset",
+          "columnsFrom": [
+            "imageAssetId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chk_image_embedding_outbox_attempt_count": {
+          "name": "chk_image_embedding_outbox_attempt_count",
+          "value": "\"met-galaxy_image_embedding_outbox\".\"attemptCount\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.met-galaxy_image_ingestion_attempt": {
+      "name": "met-galaxy_image_ingestion_attempt",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "serial",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "artworkId": {
+          "name": "artworkId",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "dryRun": {
+          "name": "dryRun",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "outcome": {
+          "name": "outcome",
+          "type": "image_ingestion_attempt_outcome",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sourceSha256": {
+          "name": "sourceSha256",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "normalizedPixelSha256": {
+          "name": "normalizedPixelSha256",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "perceptualHash": {
+          "name": "perceptualHash",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "differenceHash": {
+          "name": "differenceHash",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "matchedImageAssetId": {
+          "name": "matchedImageAssetId",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewCandidateImageAssetIds": {
+          "name": "reviewCandidateImageAssetIds",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reviewCandidateCount": {
+          "name": "reviewCandidateCount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "downloadAttemptCount": {
+          "name": "downloadAttemptCount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "sourceByteSize": {
+          "name": "sourceByteSize",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "fullByteSize": {
+          "name": "fullByteSize",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "thumbnailByteSize": {
+          "name": "thumbnailByteSize",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "estimatedCostMicroUsd": {
+          "name": "estimatedCostMicroUsd",
+          "type": "bigint",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "durationMs": {
+          "name": "durationMs",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "errorStage": {
+          "name": "errorStage",
+          "type": "varchar(100)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "error": {
+          "name": "error",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "CURRENT_TIMESTAMP"
+        }
+      },
+      "indexes": {
+        "idx_image_ingestion_attempt_artwork": {
+          "name": "idx_image_ingestion_attempt_artwork",
+          "columns": [
+            {
+              "expression": "artworkId",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "createdAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_image_ingestion_attempt_outcome": {
+          "name": "idx_image_ingestion_attempt_outcome",
+          "columns": [
+            {
+              "expression": "outcome",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "createdAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "met-galaxy_image_ingestion_attempt_artworkId_met-galaxy_artwork_id_fk": {
+          "name": "met-galaxy_image_ingestion_attempt_artworkId_met-galaxy_artwork_id_fk",
+          "tableFrom": "met-galaxy_image_ingestion_attempt",
+          "tableTo": "met-galaxy_artwork",
+          "columnsFrom": [
+            "artworkId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "met-galaxy_image_ingestion_attempt_matchedImageAssetId_met-galaxy_image_asset_id_fk": {
+          "name": "met-galaxy_image_ingestion_attempt_matchedImageAssetId_met-galaxy_image_asset_id_fk",
+          "tableFrom": "met-galaxy_image_ingestion_attempt",
+          "tableTo": "met-galaxy_image_asset",
+          "columnsFrom": [
+            "matchedImageAssetId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chk_image_ingestion_attempt_candidate_count": {
+          "name": "chk_image_ingestion_attempt_candidate_count",
+          "value": "\"met-galaxy_image_ingestion_attempt\".\"reviewCandidateCount\" >= 0"
+        },
+        "chk_image_ingestion_attempt_download_count": {
+          "name": "chk_image_ingestion_attempt_download_count",
+          "value": "\"met-galaxy_image_ingestion_attempt\".\"downloadAttemptCount\" >= 0"
+        },
+        "chk_image_ingestion_attempt_duration": {
+          "name": "chk_image_ingestion_attempt_duration",
+          "value": "\"met-galaxy_image_ingestion_attempt\".\"durationMs\" >= 0"
+        },
+        "chk_image_ingestion_attempt_cost": {
+          "name": "chk_image_ingestion_attempt_cost",
+          "value": "\"met-galaxy_image_ingestion_attempt\".\"estimatedCostMicroUsd\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.met-galaxy_image_ingestion": {
+      "name": "met-galaxy_image_ingestion",
+      "schema": "",
+      "columns": {
+        "artworkId": {
+          "name": "artworkId",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "sourceUrl": {
+          "name": "sourceUrl",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "sourceSha256": {
+          "name": "sourceSha256",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "image_ingestion_status",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'pending'"
+        },
+        "attemptCount": {
+          "name": "attemptCount",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "nextAttemptAt": {
+          "name": "nextAttemptAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "leaseOwner": {
+          "name": "leaseOwner",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "leaseExpiresAt": {
+          "name": "leaseExpiresAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "lastError": {
+          "name": "lastError",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "createdAt": {
+          "name": "createdAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "updatedAt": {
+          "name": "updatedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "CURRENT_TIMESTAMP"
+        },
+        "completedAt": {
+          "name": "completedAt",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "idx_image_ingestions_claim": {
+          "name": "idx_image_ingestions_claim",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "nextAttemptAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "leaseExpiresAt",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "idx_image_ingestions_source_sha256": {
+          "name": "idx_image_ingestions_source_sha256",
+          "columns": [
+            {
+              "expression": "sourceSha256",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "met-galaxy_image_ingestion_artworkId_met-galaxy_artwork_id_fk": {
+          "name": "met-galaxy_image_ingestion_artworkId_met-galaxy_artwork_id_fk",
+          "tableFrom": "met-galaxy_image_ingestion",
+          "tableTo": "met-galaxy_artwork",
+          "columnsFrom": [
+            "artworkId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chk_image_ingestions_attempt_count": {
+          "name": "chk_image_ingestions_attempt_count",
+          "value": "\"met-galaxy_image_ingestion\".\"attemptCount\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.met-galaxy_image_perceptual_hash_band": {
+      "name": "met-galaxy_image_perceptual_hash_band",
+      "schema": "",
+      "columns": {
+        "imageAssetId": {
+          "name": "imageAssetId",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "algorithm": {
+          "name": "algorithm",
+          "type": "image_hash_algorithm",
+          "typeSchema": "public",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bandIndex": {
+          "name": "bandIndex",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "bandValue": {
+          "name": "bandValue",
+          "type": "varchar(16)",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "idx_image_hash_bands_lookup": {
+          "name": "idx_image_hash_bands_lookup",
+          "columns": [
+            {
+              "expression": "algorithm",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "bandIndex",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "bandValue",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "met-galaxy_image_perceptual_hash_band_imageAssetId_met-galaxy_image_asset_id_fk": {
+          "name": "met-galaxy_image_perceptual_hash_band_imageAssetId_met-galaxy_image_asset_id_fk",
+          "tableFrom": "met-galaxy_image_perceptual_hash_band",
+          "tableTo": "met-galaxy_image_asset",
+          "columnsFrom": [
+            "imageAssetId"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "met-galaxy_image_perceptual_hash_band_imageAssetId_algorithm_bandIndex_pk": {
+          "name": "met-galaxy_image_perceptual_hash_band_imageAssetId_algorithm_bandIndex_pk",
+          "columns": [
+            "imageAssetId",
+            "algorithm",
+            "bandIndex"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chk_image_hash_band_index": {
+          "name": "chk_image_hash_band_index",
+          "value": "\"met-galaxy_image_perceptual_hash_band\".\"bandIndex\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {
+    "public.image_asset_processing_status": {
+      "name": "image_asset_processing_status",
+      "schema": "public",
+      "values": [
+        "pending_upload",
+        "pending_embedding",
+        "ready"
+      ]
+    },
+    "public.image_association_duplicate_state": {
+      "name": "image_association_duplicate_state",
+      "schema": "public",
+      "values": [
+        "unique",
+        "exact_duplicate",
+        "verified_duplicate"
+      ]
+    },
+    "public.image_duplicate_candidate_status": {
+      "name": "image_duplicate_candidate_status",
+      "schema": "public",
+      "values": [
+        "review_candidate",
+        "verified_duplicate",
+        "rejected"
+      ]
+    },
+    "public.image_embedding_outbox_status": {
+      "name": "image_embedding_outbox_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "dispatched"
+      ]
+    },
+    "public.image_hash_algorithm": {
+      "name": "image_hash_algorithm",
+      "schema": "public",
+      "values": [
+        "phash64",
+        "dhash64"
+      ]
+    },
+    "public.image_ingestion_attempt_outcome": {
+      "name": "image_ingestion_attempt_outcome",
+      "schema": "public",
+      "values": [
+        "new_asset",
+        "exact_duplicate",
+        "already_linked",
+        "retryable_failure",
+        "terminal_failure"
+      ]
+    },
+    "public.image_ingestion_status": {
+      "name": "image_ingestion_status",
+      "schema": "public",
+      "values": [
+        "pending",
+        "processing",
+        "awaiting_embedding",
+        "complete",
+        "retryable_failure",
+        "terminal_failure"
+      ]
+    }
+  },
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

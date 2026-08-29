@@ -7,3 +7,7 @@ dist/
 .DS_Store
 
 venv/
+venv-embeddings/
+benchmark-data/
+migration-reports/
+__pycache__/

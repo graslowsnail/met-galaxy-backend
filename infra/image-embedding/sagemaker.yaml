@@ -1,0 +1,138 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: SageMaker GPU endpoint for canonical OpenCLIP image embeddings
+
+Parameters:
+  WorkerImageUri:
+    Type: String
+    Description: Immutable ECR image URI for the SageMaker-compatible worker
+  DatabaseSecretArn:
+    Type: String
+  EmbeddingQueueArn:
+    Type: String
+  EmbeddingQueueUrl:
+    Type: String
+  ModelDataUrl:
+    Type: String
+    Default: ""
+    Description: Optional s3:// URL for a model artifact
+    AllowedPattern: '^$|^s3://[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]/.+$'
+  GPUInstanceCount:
+    Type: Number
+    Default: 1
+    MinValue: 1
+    MaxValue: 16
+
+Conditions:
+  HasModelDataUrl: !Not [!Equals [!Ref ModelDataUrl, ""]]
+
+Resources:
+  EndpointExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sagemaker.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: image-embedding-endpoint
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:ecr:${AWS::Region}:${AWS::AccountId}:repository/met-galaxy-image-embedding
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:s3:::met-artworks-images/assets/v1/*
+              - !If
+                - HasModelDataUrl
+                - Effect: Allow
+                  Action: s3:GetObject
+                  Resource: !Sub
+                    - arn:${AWS::Partition}:s3:::${ModelDataBucket}/*
+                    - ModelDataBucket: !Select
+                        - 2
+                        - !Split ["/", !Ref ModelDataUrl]
+                - !Ref AWS::NoValue
+              - Effect: Allow
+                Action:
+                  - sqs:ChangeMessageVisibility
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ReceiveMessage
+                  - sqs:SendMessage
+                Resource: !Ref EmbeddingQueueArn
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref DatabaseSecretArn
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub >-
+                  arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/sagemaker/Endpoints/*
+
+  EmbeddingModel:
+    Type: AWS::SageMaker::Model
+    Properties:
+      ModelName: met-galaxy-image-embedding-gpu
+      ExecutionRoleArn: !GetAtt EndpointExecutionRole.Arn
+      PrimaryContainer:
+        Image: !Ref WorkerImageUri
+        ModelDataUrl: !If
+          - HasModelDataUrl
+          - !Ref ModelDataUrl
+          - !Ref AWS::NoValue
+        Environment:
+          AWS_REGION: us-east-1
+          AWS_DEFAULT_REGION: us-east-1
+          DATABASE_SECRET_ARN: !Ref DatabaseSecretArn
+          S3_BUCKET_NAME: met-artworks-images
+          IMAGE_EMBEDDING_QUEUE_ARN: !Ref EmbeddingQueueArn
+          IMAGE_EMBEDDING_QUEUE_URL: !Ref EmbeddingQueueUrl
+          IMAGE_EMBEDDING_DEVICE: cuda
+          IMAGE_EMBEDDING_DOWNLOAD_CONCURRENCY: "10"
+
+  EmbeddingEndpointConfig:
+    Type: AWS::SageMaker::EndpointConfig
+    DependsOn: EmbeddingModel
+    Properties:
+      EndpointConfigName: met-galaxy-image-embedding-gpu
+      ProductionVariants:
+        - VariantName: AllTraffic
+          ModelName: met-galaxy-image-embedding-gpu
+          InitialInstanceCount: !Ref GPUInstanceCount
+          InitialVariantWeight: 1
+          InstanceType: ml.g5.xlarge
+          ContainerStartupHealthCheckTimeoutInSeconds: 900
+          ModelDataDownloadTimeoutInSeconds: 900
+
+  EmbeddingEndpoint:
+    Type: AWS::SageMaker::Endpoint
+    DependsOn: EmbeddingEndpointConfig
+    Properties:
+      EndpointName: met-galaxy-image-embedding-gpu
+      EndpointConfigName: met-galaxy-image-embedding-gpu
+      Tags:
+        - Key: Project
+          Value: met-galaxy
+        - Key: Workload
+          Value: image-embedding
+
+Outputs:
+  EndpointName:
+    Value: !GetAtt EmbeddingEndpoint.EndpointName
+  EndpointArn:
+    Value: !GetAtt EmbeddingEndpoint.EndpointArn

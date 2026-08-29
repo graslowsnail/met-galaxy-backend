@@ -1,0 +1,2 @@
+CREATE INDEX IF NOT EXISTS "idx_artworks_txtvec_eligible" ON "met-galaxy_artwork" USING hnsw ("txtVec" vector_cosine_ops) WITH (m=16,ef_construction=64) WHERE "met-galaxy_artwork"."txtVec" IS NOT NULL AND "met-galaxy_artwork"."imgVec" IS NOT NULL AND "met-galaxy_artwork"."imageAssetId" IS NOT NULL AND "met-galaxy_artwork"."localImageUrl" IS NOT NULL AND "met-galaxy_artwork"."localImageUrl" <> '';--> statement-breakpoint
+DROP INDEX IF EXISTS "idx_artworks_txtvec_hnsw";

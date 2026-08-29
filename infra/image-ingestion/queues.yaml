@@ -1,0 +1,148 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Durable queues for canonical image ingestion and OpenCLIP dispatch
+
+Parameters:
+  WorkerImageUri:
+    Type: String
+    Default: ""
+  DatabaseSecretArn:
+    Type: String
+    Default: ""
+  WorkerMaximumConcurrency:
+    Type: Number
+    Default: 16
+    MinValue: 2
+    MaxValue: 1000
+
+Conditions:
+  DeployWorker: !And
+    - !Not [!Equals [!Ref WorkerImageUri, ""]]
+    - !Not [!Equals [!Ref DatabaseSecretArn, ""]]
+
+Resources:
+  ImageIngestionDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: met-galaxy-image-ingestion-dlq
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  ImageIngestionQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: met-galaxy-image-ingestion
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 20
+      VisibilityTimeout: 900
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ImageIngestionDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  ImageEmbeddingDeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: met-galaxy-image-embedding-dlq.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  ImageEmbeddingQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: met-galaxy-image-embedding.fifo
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      MessageRetentionPeriod: 1209600
+      ReceiveMessageWaitTimeSeconds: 20
+      VisibilityTimeout: 900
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ImageEmbeddingDeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  ImageIngestionWorkerRole:
+    Type: AWS::IAM::Role
+    Condition: DeployWorker
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaSQSQueueExecutionRole
+      Policies:
+        - PolicyName: image-ingestion-data
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                Resource: arn:aws:s3:::met-artworks-images/assets/v1/*
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: arn:aws:s3:::met-artworks-images/artworks/*
+              - Effect: Allow
+                Action: s3:ListBucket
+                Resource: arn:aws:s3:::met-artworks-images
+                Condition:
+                  StringLike:
+                    s3:prefix: assets/v1/*
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref DatabaseSecretArn
+
+  ImageIngestionWorker:
+    Type: AWS::Lambda::Function
+    Condition: DeployWorker
+    Properties:
+      FunctionName: met-galaxy-image-ingestion
+      PackageType: Image
+      Code:
+        ImageUri: !Ref WorkerImageUri
+      Architectures:
+        - arm64
+      MemorySize: 2048
+      Timeout: 900
+      Role: !GetAtt ImageIngestionWorkerRole.Arn
+      Environment:
+        Variables:
+          DATABASE_SECRET_ARN: !Ref DatabaseSecretArn
+          S3_BUCKET_NAME: met-artworks-images
+          IMAGE_CDN_BASE_URL: https://d2pvxr3eb77vb4.cloudfront.net
+          IMAGE_INGESTION_FETCH_RETRIES: "3"
+          IMAGE_INGESTION_MAX_ATTEMPTS: "5"
+          IMAGE_INGESTION_LEASE_SECONDS: "900"
+
+  ImageIngestionEventSource:
+    Type: AWS::Lambda::EventSourceMapping
+    Condition: DeployWorker
+    Properties:
+      EventSourceArn: !GetAtt ImageIngestionQueue.Arn
+      FunctionName: !Ref ImageIngestionWorker
+      BatchSize: 1
+      Enabled: true
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+      ScalingConfig:
+        MaximumConcurrency: !Ref WorkerMaximumConcurrency
+
+Outputs:
+  ImageIngestionQueueUrl:
+    Value: !Ref ImageIngestionQueue
+  ImageIngestionQueueArn:
+    Value: !GetAtt ImageIngestionQueue.Arn
+  ImageEmbeddingQueueUrl:
+    Value: !Ref ImageEmbeddingQueue
+  ImageEmbeddingQueueArn:
+    Value: !GetAtt ImageEmbeddingQueue.Arn
+  ImageIngestionWorkerArn:
+    Condition: DeployWorker
+    Value: !GetAtt ImageIngestionWorker.Arn

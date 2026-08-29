@@ -1,0 +1,51 @@
+{
+  "dryRun": true,
+  "judgmentFile": "evaluation/search-relevance.json",
+  "judgments": {
+    "sourceQueries": 15,
+    "reviewedQueries": 15,
+    "skippedQueries": 0,
+    "skipped": [],
+    "uniqueJudgedCanonicalAssets": 304,
+    "missingCanonicalAssetIds": [],
+    "unsearchableCanonicalAssetIds": []
+  },
+  "candidateSet": {
+    "limit": 1000,
+    "documents": 1000,
+    "judgedDocuments": 304,
+    "sampledDocuments": 696,
+    "seed": "priority6-text-model-evaluation-v1",
+    "sampledDepartmentCounts": {
+      "Ancient Near Eastern Art": 36,
+      "Arms and Armor": 37,
+      "Arts of Africa, Oceania, and the Americas": 36,
+      "Asian Art": 37,
+      "Costume Institute": 36,
+      "Drawings and Prints": 37,
+      "Egyptian Art": 36,
+      "European Paintings": 37,
+      "European Sculpture and Decorative Arts": 37,
+      "Greek and Roman Art": 37,
+      "Islamic Art": 37,
+      "Medieval Art": 37,
+      "Modern and Contemporary Art": 36,
+      "Musical Instruments": 37,
+      "Photographs": 37,
+      "Robert Lehman Collection": 37,
+      "The American Wing": 37,
+      "The Cloisters": 36,
+      "The Libraries": 36
+    }
+  },
+  "projectedInput": {
+    "charactersPerModel": 430054,
+    "approximateTokensPerModel": 107514,
+    "approximateTokensBothModels": 215028
+  },
+  "limitations": [
+    "Metrics rank only the deterministic bounded candidate sample, not the full production corpus.",
+    "Only listed canonical assets are treated as relevant; unjudged results are counted as non-relevant.",
+    "The comparison isolates metadata embeddings and does not measure keyword, OpenCLIP, or reciprocal-rank fusion."
+  ]
+}

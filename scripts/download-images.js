@@ -7,14 +7,15 @@ const BATCH_SIZE = 25; // Reduced from 50 to avoid rate limiting
 const DELAY_BETWEEN_BATCHES = 3000; // 3 seconds (vs our original 1 second)
 const RANDOM_DELAY_RANGE = 1000; // 0-1 second random delay
 const MAX_CONCURRENT = 5; // Reduced concurrent downloads
+const AWS_REGION = process.env.AWS_REGION || 'us-east-1';
+const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME || 'met-artworks-images';
+const IMAGE_CDN_BASE_URL = (
+  process.env.IMAGE_CDN_BASE_URL || 'https://d2pvxr3eb77vb4.cloudfront.net'
+).replace(/\/+$/, '');
 
 // AWS S3 setup
 const s3Client = new S3Client({
-  region: 'us-east-1',
-  credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-  }
+  region: AWS_REGION,
 });
 
 // Database setup
@@ -38,14 +39,15 @@ async function downloadImage(url) {
 
 async function uploadToS3(imageBuffer, key) {
   const command = new PutObjectCommand({
-    Bucket: 'met-artworks-images',
+    Bucket: S3_BUCKET_NAME,
     Key: key,
     Body: imageBuffer,
     ContentType: 'image/jpeg',
+    CacheControl: 'public, max-age=31536000, immutable',
   });
   
   await s3Client.send(command);
-  return `https://met-artworks-images.s3.amazonaws.com/${key}`;
+  return `${IMAGE_CDN_BASE_URL}/${key}`;
 }
 
 async function processImage(artwork) {

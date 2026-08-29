@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db } from "../db/index.js";
-import { artworks } from "../db/schema.js";
+import { artworks, imageAssets } from "../db/schema.js";
 import { sql } from "drizzle-orm";
 import {
   hash32, mulberry32, gaussianVector, lerp, smoothstep,
@@ -13,6 +13,120 @@ const getImageUrl = (a: any) => a.localImageUrl || a.primaryImageSmall || a.prim
 const getImageSource = (a: any) => a.localImageUrl ? "s3" : (a.primaryImageSmall ? "met_small" : (a.primaryImage ? "met_original" : null));
 
 const seedToPgFloat = (seed: number) => (seed >>> 0) / 4294967296;
+
+type CanonicalPoolArtwork = {
+  id: number;
+  imageAssetId: number;
+  objectId: number;
+  title: string | null;
+  artist: string | null;
+  localImageUrl: string | null;
+  primaryImage: string | null;
+  primaryImageSmall: string | null;
+  sim?: number;
+};
+
+const artworkExclusion = (excludedIds: number[]) => excludedIds.length > 0
+  ? sql`AND artwork.id NOT IN (${sql.join(excludedIds.map(id => sql`${id}`), sql`, `)})`
+  : sql``;
+
+const getCanonicalSimilarityPool = async (
+  vector: string,
+  targetAssetId: number,
+  limit: number,
+  excludedIds: number[],
+) => db.transaction(async (tx) => {
+  await tx.execute(sql`SET LOCAL hnsw.ef_search = 200`);
+  await tx.execute(sql`SET LOCAL hnsw.iterative_scan = 'strict_order'`);
+  await tx.execute(sql`SET LOCAL hnsw.max_scan_tuples = 50000`);
+  await tx.execute(sql`SET LOCAL enable_seqscan = off`);
+  const rows = await tx.execute(sql`
+    WITH nearest AS MATERIALIZED (
+      SELECT
+        asset.id AS "imageAssetId",
+        asset."imageEmbedding" <=> ${vector}::vector AS distance
+      FROM "met-galaxy_image_asset" asset
+      LEFT JOIN "met-galaxy_image_asset_canonical" mapping
+        ON mapping."assetId" = asset.id
+      WHERE asset.id <> ${targetAssetId}
+        AND asset."processingStatus" = 'ready'
+        AND asset."imageEmbedding" IS NOT NULL
+        AND mapping."assetId" IS NULL
+      ORDER BY asset."imageEmbedding" <=> ${vector}::vector
+      LIMIT ${limit}
+    )
+    SELECT
+      artwork.id,
+      nearest."imageAssetId",
+      artwork."objectId",
+      artwork.title,
+      artwork.artist,
+      artwork."localImageUrl",
+      artwork."primaryImage",
+      artwork."primaryImageSmall",
+      1 - nearest.distance AS sim
+    FROM nearest
+    CROSS JOIN LATERAL (
+      SELECT artwork.*
+      FROM "met-galaxy_artwork" artwork
+      WHERE artwork."imageAssetId" = nearest."imageAssetId"
+        AND artwork."localImageUrl" IS NOT NULL
+        AND artwork."localImageUrl" <> ''
+        ${artworkExclusion(excludedIds)}
+      ORDER BY artwork.id
+      LIMIT 1
+    ) artwork
+    ORDER BY nearest.distance, artwork.id
+  `);
+  return Array.from(rows) as CanonicalPoolArtwork[];
+});
+
+const getCanonicalRandomPool = async (
+  seed: number,
+  targetAssetId: number,
+  limit: number,
+  excludedIds: number[],
+) => db.transaction(async (tx) => {
+  await tx.execute(sql`SELECT setseed(${seedToPgFloat(seed)})`);
+  const rows = await tx.execute(sql`
+    WITH randomized AS MATERIALIZED (
+      SELECT
+        asset.id AS "imageAssetId",
+        RANDOM() AS random_rank
+      FROM "met-galaxy_image_asset" asset
+      LEFT JOIN "met-galaxy_image_asset_canonical" mapping
+        ON mapping."assetId" = asset.id
+      WHERE asset.id <> ${targetAssetId}
+        AND asset."processingStatus" = 'ready'
+        AND asset."imageEmbedding" IS NOT NULL
+        AND mapping."assetId" IS NULL
+      ORDER BY random_rank, asset.id
+      LIMIT ${limit}
+    )
+    SELECT
+      artwork.id,
+      randomized."imageAssetId",
+      artwork."objectId",
+      artwork.title,
+      artwork.artist,
+      artwork."localImageUrl",
+      artwork."primaryImage",
+      artwork."primaryImageSmall"
+    FROM randomized
+    CROSS JOIN LATERAL (
+      SELECT artwork.*
+      FROM "met-galaxy_artwork" artwork
+      WHERE artwork."imageAssetId" = randomized."imageAssetId"
+        AND artwork."localImageUrl" IS NOT NULL
+        AND artwork."localImageUrl" <> ''
+        ${artworkExclusion(excludedIds)}
+      ORDER BY artwork.id
+      LIMIT 1
+    ) artwork
+    ORDER BY randomized.random_rank, artwork.id
+  `);
+  return Array.from(rows) as CanonicalPoolArtwork[];
+});
 
 router.get("/field-chunk", async (req, res) => {
   const start = Date.now();
@@ -30,14 +144,20 @@ router.get("/field-chunk", async (req, res) => {
     // target
     const [target] = await db.select({
       id: artworks.id,
+      imageAssetId: artworks.imageAssetId,
       title: artworks.title,
       artist: artworks.artist,
-      imgVec: artworks.imgVec,
+      imgVec: imageAssets.imageEmbedding,
       localImageUrl: artworks.localImageUrl,
       primaryImage: artworks.primaryImage,
       primaryImageSmall: artworks.primaryImageSmall,
     }).from(artworks)
-     .where(sql`id = ${targetId} AND "imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != ''`)
+     .innerJoin(imageAssets, sql`${imageAssets.id} = ${artworks.imageAssetId}`)
+     .where(sql`${artworks.id} = ${targetId}
+       AND ${imageAssets.processingStatus} = 'ready'
+       AND ${imageAssets.imageEmbedding} IS NOT NULL
+       AND ${artworks.localImageUrl} IS NOT NULL
+       AND ${artworks.localImageUrl} != ''`)
      .limit(1);
 
     if (!target) return res.status(404).json({ success: false, error: "Target not found or missing embedding/image" });
@@ -70,35 +190,14 @@ router.get("/field-chunk", async (req, res) => {
         const n = parseInt(s); if (!Number.isNaN(n)) excludeSet.add(n);
       }
     }
-    const notTarget = sql`id != ${targetId}`;
+    const excludedIds = Array.from(excludeSet);
 
     // Pools
-    const simTight = await db.select({
-      id: artworks.id, objectId: artworks.objectId, title: artworks.title, artist: artworks.artist,
-      localImageUrl: artworks.localImageUrl, primaryImage: artworks.primaryImage, primaryImageSmall: artworks.primaryImageSmall,
-      sim: sql<number>`1 - ("imgVec" <=> ${vStr}::vector)`
-    }).from(artworks)
-     .where(sql`"imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND ${notTarget}`)
-     .orderBy(sql`"imgVec" <=> ${vStr}::vector`)
-     .limit(200);
-
-    const simDrift = await db.select({
-      id: artworks.id, objectId: artworks.objectId, title: artworks.title, artist: artworks.artist,
-      localImageUrl: artworks.localImageUrl, primaryImage: artworks.primaryImage, primaryImageSmall: artworks.primaryImageSmall,
-      sim: sql<number>`1 - ("imgVec" <=> ${vpStr}::vector)`
-    }).from(artworks)
-     .where(sql`"imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND ${notTarget}`)
-     .orderBy(sql`"imgVec" <=> ${vpStr}::vector`)
-     .limit(400);
-
-    await db.execute(sql`SELECT setseed(${seedToPgFloat(seed)})`);
-    const randPool = await db.select({
-      id: artworks.id, objectId: artworks.objectId, title: artworks.title, artist: artworks.artist,
-      localImageUrl: artworks.localImageUrl, primaryImage: artworks.primaryImage, primaryImageSmall: artworks.primaryImageSmall
-    }).from(artworks)
-     .where(sql`"imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND ${notTarget}`)
-     .orderBy(sql`RANDOM(), id ASC`)
-     .limit(800);
+    const [simTight, simDrift, randPool] = await Promise.all([
+      getCanonicalSimilarityPool(vStr, target.imageAssetId!, 200, excludedIds),
+      getCanonicalSimilarityPool(vpStr, target.imageAssetId!, 400, excludedIds),
+      getCanonicalRandomPool(seed, target.imageAssetId!, 800, excludedIds),
+    ]);
 
     const wSim = (1 - t) * (1 - t);
     const wDrift = 2 * t * (1 - t);
@@ -107,6 +206,7 @@ router.get("/field-chunk", async (req, res) => {
     const pSim = wSim / sum, pDrift = wDrift / sum;
 
     const used = new Set<number>(excludeSet);
+    const usedAssets = new Set<number>([target.imageAssetId!]);
     const out: any[] = [];
     
     // Spatial partitioning for close chunks to prevent duplicates
@@ -119,7 +219,7 @@ router.get("/field-chunk", async (req, res) => {
     const takeNext = (q: any[]) => {
       while (q.length) {
         const p = q.shift();
-        if (!used.has(p.id)) return p;
+        if (!used.has(p.id) && !usedAssets.has(p.imageAssetId)) return p;
       }
       return null;
     };
@@ -137,11 +237,13 @@ router.get("/field-chunk", async (req, res) => {
       else cand = takeNext(randQ) || takeNext(simDriftQ) || takeNext(simTightQ);
       if (!cand) break;
       used.add(cand.id);
+      usedAssets.add(cand.imageAssetId);
       out.push(cand);
     }
 
     const data = out.map(p => ({
       id: p.id,
+      canonicalAssetId: p.imageAssetId,
       objectId: p.objectId,
       title: p.title,
       artist: p.artist,
@@ -219,14 +321,20 @@ router.post("/field-chunks", async (req, res) => {
     // Get target artwork
     const [target] = await db.select({
       id: artworks.id,
+      imageAssetId: artworks.imageAssetId,
       title: artworks.title,
       artist: artworks.artist,
-      imgVec: artworks.imgVec,
+      imgVec: imageAssets.imageEmbedding,
       localImageUrl: artworks.localImageUrl,
       primaryImage: artworks.primaryImage,
       primaryImageSmall: artworks.primaryImageSmall,
     }).from(artworks)
-     .where(sql`id = ${targetId} AND "imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != ''`)
+     .innerJoin(imageAssets, sql`${imageAssets.id} = ${artworks.imageAssetId}`)
+     .where(sql`${artworks.id} = ${targetId}
+       AND ${imageAssets.processingStatus} = 'ready'
+       AND ${imageAssets.imageEmbedding} IS NOT NULL
+       AND ${artworks.localImageUrl} IS NOT NULL
+       AND ${artworks.localImageUrl} != ''`)
      .limit(1);
 
     if (!target) {
@@ -243,11 +351,9 @@ router.post("/field-chunks", async (req, res) => {
     // Global exclusion set
     const globalExcludes = new Set<number>([targetId, ...actualExcludeIds]);
     const globalUsed = new Set<number>(globalExcludes); // Track used IDs across all chunks
+    const globalUsedAssets = new Set<number>([target.imageAssetId!]);
     
-    // Build SQL exclusion clause
-    const excludeClause = globalExcludes.size > 0 
-      ? sql`AND id NOT IN (${sql.join(Array.from(globalExcludes), sql`, `)})`
-      : sql``;
+    const excludedIds = Array.from(globalExcludes);
 
     // Sort chunks by distance for better similarity distribution
     const sortedChunks = chunks.map((chunk, index) => ({
@@ -263,16 +369,12 @@ router.post("/field-chunks", async (req, res) => {
 
     // Generate global pools
     const vStr = `[${Array.from(v).join(',')}]`;
-    const notTarget = sql`id != ${targetId}`;
-
-    const globalSimTight = await db.select({
-      id: artworks.id, objectId: artworks.objectId, title: artworks.title, artist: artworks.artist,
-      localImageUrl: artworks.localImageUrl, primaryImage: artworks.primaryImage, primaryImageSmall: artworks.primaryImageSmall,
-      sim: sql<number>`1 - ("imgVec" <=> ${vStr}::vector)`
-    }).from(artworks)
-     .where(sql`"imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND ${notTarget} ${excludeClause}`)
-     .orderBy(sql`"imgVec" <=> ${vStr}::vector`)
-     .limit(simTightLimit);
+    const globalSimTight = await getCanonicalSimilarityPool(
+      vStr,
+      target.imageAssetId!,
+      simTightLimit,
+      excludedIds,
+    );
 
     // Process each chunk
     const results: Record<string, any> = {};
@@ -299,24 +401,20 @@ router.post("/field-chunks", async (req, res) => {
       const vpStr = `[${Array.from(vprime).join(',')}]`;
 
       // Generate drift pool for this chunk
-      const chunkSimDrift = await db.select({
-        id: artworks.id, objectId: artworks.objectId, title: artworks.title, artist: artworks.artist,
-        localImageUrl: artworks.localImageUrl, primaryImage: artworks.primaryImage, primaryImageSmall: artworks.primaryImageSmall,
-        sim: sql<number>`1 - ("imgVec" <=> ${vpStr}::vector)`
-      }).from(artworks)
-       .where(sql`"imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND ${notTarget} ${excludeClause}`)
-       .orderBy(sql`"imgVec" <=> ${vpStr}::vector`)
-       .limit(Math.min(400, simDriftLimit));
+      const chunkSimDrift = await getCanonicalSimilarityPool(
+        vpStr,
+        target.imageAssetId!,
+        Math.min(400, simDriftLimit),
+        excludedIds,
+      );
 
       // Generate random pool for this chunk
-      await db.execute(sql`SELECT setseed(${seedToPgFloat(seed)})`);
-      const chunkRandPool = await db.select({
-        id: artworks.id, objectId: artworks.objectId, title: artworks.title, artist: artworks.artist,
-        localImageUrl: artworks.localImageUrl, primaryImage: artworks.primaryImage, primaryImageSmall: artworks.primaryImageSmall
-      }).from(artworks)
-       .where(sql`"imgVec" IS NOT NULL AND "localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND ${notTarget} ${excludeClause}`)
-       .orderBy(sql`RANDOM(), id ASC`)
-       .limit(Math.min(800, randLimit));
+      const chunkRandPool = await getCanonicalRandomPool(
+        seed,
+        target.imageAssetId!,
+        Math.min(800, randLimit),
+        excludedIds,
+      );
 
       // Enhanced spatial partitioning for better deduplication
       const getSpatialOffset = (cx: number, cy: number, globalSd: number, chIdx: number) => {
@@ -343,12 +441,16 @@ router.post("/field-chunks", async (req, res) => {
 
       // Selection logic - DB excludes global list, we need both chunk and cross-chunk deduplication
       const chunkUsed = new Set<number>(globalUsed);
+      const chunkUsedAssets = new Set<number>(globalUsedAssets);
       const chunkOut: any[] = [];
 
       const takeNext = (q: any[]) => {
         while (q.length) {
           const p = q.shift();
-          if (!chunkUsed.has(p.id)) return p;
+          if (
+            !chunkUsed.has(p.id)
+            && !chunkUsedAssets.has(p.imageAssetId)
+          ) return p;
         }
         return null;
       };
@@ -368,13 +470,16 @@ router.post("/field-chunks", async (req, res) => {
         if (!cand) break;
         
         chunkUsed.add(cand.id);
+        chunkUsedAssets.add(cand.imageAssetId);
         globalUsed.add(cand.id); // Update global used set for cross-chunk deduplication
+        globalUsedAssets.add(cand.imageAssetId);
         chunkOut.push(cand);
       }
 
       // Format chunk data
       const chunkData = chunkOut.map(p => ({
         id: p.id,
+        canonicalAssetId: p.imageAssetId,
         objectId: p.objectId,
         title: p.title,
         artist: p.artist,

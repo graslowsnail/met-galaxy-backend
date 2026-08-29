@@ -1,0 +1,3 @@
+ALTER TABLE "met-galaxy_artwork" ADD COLUMN "imageAssetId" integer;--> statement-breakpoint
+ALTER TABLE "met-galaxy_artwork" ADD CONSTRAINT "met-galaxy_artwork_imageAssetId_met-galaxy_image_asset_id_fk" FOREIGN KEY ("imageAssetId") REFERENCES "public"."met-galaxy_image_asset"("id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+CREATE INDEX "idx_artworks_image_asset_id" ON "met-galaxy_artwork" USING btree ("imageAssetId");

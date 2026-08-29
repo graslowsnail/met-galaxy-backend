@@ -1,0 +1,34 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      OPENCLIP_TEXT_EMBEDDING_URL: http://openclip-text:8090
+      OPENCLIP_TEXT_AUTH_TOKEN: ${OPENCLIP_TEXT_AUTH_TOKEN}
+    ports:
+      - "8080:8080"
+    depends_on:
+      openclip-text:
+        condition: service_healthy
+
+  openclip-text:
+    build:
+      context: .
+      dockerfile: infra/openclip-text/Dockerfile
+    environment:
+      OPENCLIP_TEXT_AUTH_TOKEN: ${OPENCLIP_TEXT_AUTH_TOKEN}
+      OPENCLIP_MODEL: ViT-L-14
+      OPENCLIP_PRETRAINED: openai
+      OPENCLIP_DEVICE: cpu
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8090/health', timeout=2)
+      interval: 30s
+      timeout: 3s
+      start_period: 90s
+      retries: 3

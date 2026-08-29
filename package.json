@@ -12,13 +12,20 @@
     "db:migrate": "drizzle-kit migrate",
     "db:studio": "drizzle-kit studio",
     "download-images": "node scripts/download-images.js",
-    "generate-embeddings": "source venv/bin/activate && python scripts/generate-embeddings.py",
-    "generate-text-embeddings": "venv/bin/python -u scripts/generate-text-embeddings.py"
+    "ingest-images": "venv/bin/python -u scripts/image_ingestion_worker.py",
+    "generate-embeddings": "venv-embeddings/bin/python -u scripts/image_embedding_worker.py",
+    "generate-text-embeddings": "venv-embeddings/bin/python -u scripts/generate-text-embeddings.py",
+    "rebuild-hnsw-indexes": "venv-embeddings/bin/python -u scripts/rebuild_hnsw_indexes.py",
+    "build-pca": "venv-embeddings/bin/python -u scripts/pca_build.py",
+    "build-search-review": "venv-embeddings/bin/python -u scripts/build-search-review.py",
+    "review-image-duplicates": "venv/bin/python -u scripts/review_image_duplicates.py",
+    "serve-openclip-text": "venv-embeddings/bin/python -u scripts/openclip_text_service.py"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1098.0",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "drizzle-orm": "^0.44.4",

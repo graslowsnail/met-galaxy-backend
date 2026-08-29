@@ -1,0 +1,1 @@
+CREATE INDEX "idx_image_assets_embedding_hnsw" ON "met-galaxy_image_asset" USING hnsw ("imageEmbedding" vector_cosine_ops) WITH (m=16,ef_construction=64) WHERE "met-galaxy_image_asset"."imageEmbedding" IS NOT NULL AND "met-galaxy_image_asset"."processingStatus" = 'ready';

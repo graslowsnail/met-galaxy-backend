@@ -1,0 +1,220 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: GPU batch worker for canonical OpenCLIP embeddings
+
+Parameters:
+  WorkerImageUri:
+    Type: String
+  DatabaseSecretArn:
+    Type: String
+  EmbeddingQueueArn:
+    Type: String
+  EmbeddingQueueUrl:
+    Type: String
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+  SecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+  ComputeType:
+    Type: String
+    Default: SPOT
+    AllowedValues:
+      - SPOT
+      - EC2
+
+Conditions:
+  UseSpot: !Equals [!Ref ComputeType, SPOT]
+
+Resources:
+  BatchServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: batch.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBatchServiceRole
+
+  SpotFleetRole:
+    Type: AWS::IAM::Role
+    Condition: UseSpot
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: spotfleet.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2SpotFleetTaggingRole
+
+  ContainerInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role
+
+  ContainerInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref ContainerInstanceRole
+
+  JobExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  JobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: image-embedding-data
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: s3:GetObject
+                Resource: arn:aws:s3:::met-artworks-images/assets/v1/*
+              - Effect: Allow
+                Action:
+                  - sqs:ChangeMessageVisibility
+                  - sqs:DeleteMessage
+                  - sqs:GetQueueAttributes
+                  - sqs:ReceiveMessage
+                  - sqs:SendMessage
+                Resource: !Ref EmbeddingQueueArn
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref DatabaseSecretArn
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/batch/met-galaxy-image-embedding
+      RetentionInDays: 30
+
+  ComputeEnvironment:
+    Type: AWS::Batch::ComputeEnvironment
+    Properties:
+      Type: MANAGED
+      State: ENABLED
+      ServiceRole: !GetAtt BatchServiceRole.Arn
+      ComputeResources:
+        Type: !Ref ComputeType
+        AllocationStrategy: !If
+          - UseSpot
+          - SPOT_CAPACITY_OPTIMIZED
+          - BEST_FIT_PROGRESSIVE
+        MinvCpus: 0
+        DesiredvCpus: 0
+        MaxvCpus: 8
+        InstanceTypes:
+          - g5.xlarge
+        InstanceRole: !GetAtt ContainerInstanceProfile.Arn
+        SpotIamFleetRole: !If
+          - UseSpot
+          - !GetAtt SpotFleetRole.Arn
+          - !Ref AWS::NoValue
+        Subnets: !Ref SubnetIds
+        SecurityGroupIds:
+          - !Ref SecurityGroupId
+        Tags:
+          Project: met-galaxy
+          Workload: image-embedding
+
+  JobQueue:
+    Type: AWS::Batch::JobQueue
+    Properties:
+      JobQueueName: met-galaxy-image-embedding
+      Priority: 1
+      State: ENABLED
+      ComputeEnvironmentOrder:
+        - Order: 1
+          ComputeEnvironment: !Ref ComputeEnvironment
+
+  JobDefinition:
+    Type: AWS::Batch::JobDefinition
+    Properties:
+      JobDefinitionName: met-galaxy-image-embedding
+      Type: container
+      PlatformCapabilities:
+        - EC2
+      Timeout:
+        AttemptDurationSeconds: 43200
+      RetryStrategy:
+        Attempts: 1
+      ContainerProperties:
+        Image: !Ref WorkerImageUri
+        Vcpus: 4
+        Memory: 15000
+        JobRoleArn: !GetAtt JobRole.Arn
+        ExecutionRoleArn: !GetAtt JobExecutionRole.Arn
+        ResourceRequirements:
+          - Type: GPU
+            Value: "1"
+        Command:
+          - work
+          - --limit
+          - "1000000"
+          - --batch-size
+          - "10"
+          - --device
+          - cuda
+          - --refill-size
+          - "1000"
+          - --idle-polls
+          - "12"
+        Environment:
+          - Name: AWS_REGION
+            Value: us-east-1
+          - Name: DATABASE_SECRET_ARN
+            Value: !Ref DatabaseSecretArn
+          - Name: S3_BUCKET_NAME
+            Value: met-artworks-images
+          - Name: IMAGE_EMBEDDING_QUEUE_URL
+            Value: !Ref EmbeddingQueueUrl
+          - Name: IMAGE_EMBEDDING_DOWNLOAD_CONCURRENCY
+            Value: "10"
+        LogConfiguration:
+          LogDriver: awslogs
+          Options:
+            awslogs-group: !Ref LogGroup
+            awslogs-region: us-east-1
+            awslogs-stream-prefix: worker
+
+Outputs:
+  JobQueueArn:
+    Value: !Ref JobQueue
+  JobDefinitionArn:
+    Value: !Ref JobDefinition
+  ComputeEnvironmentArn:
+    Value: !Ref ComputeEnvironment

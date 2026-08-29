@@ -59,3 +59,12 @@ scripts/
 # drizzle/ (needed for migrations)
 # package*.json (needed for dependencies)
 # dist/ (compiled JavaScript - copied from builder stage)
+
+!scripts/
+scripts/*
+!scripts/image-ingestion-requirements.txt
+!scripts/image_ingestion_worker.py
+!scripts/image-embedding-requirements.txt
+!scripts/image_embedding_worker.py
+!scripts/sagemaker_image_embedding_service.py
+!scripts/invoke_sagemaker_embedding_workers.py
