@@ -68,3 +68,4 @@ scripts/*
 !scripts/image_embedding_worker.py
 !scripts/sagemaker_image_embedding_service.py
 !scripts/invoke_sagemaker_embedding_workers.py
+!scripts/openclip_text_service.py
