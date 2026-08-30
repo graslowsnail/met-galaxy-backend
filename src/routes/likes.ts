@@ -2,6 +2,7 @@ import { Router } from "express";
 import { sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { getFullImageUrl, getGraphImageUrl, getImageSource } from "../lib/imageUrls.js";
+import { parseTimelineRange, timelineFilter, timelineYearSql } from "../lib/timeline.js";
 
 const router = Router();
 const VOTER_ID_PATTERN = /^[a-zA-Z0-9_-]{16,128}$/;
@@ -22,6 +23,9 @@ type LikedArtworkRow = {
   primaryImage: string | null;
   primaryImageSmall: string | null;
   objectUrl: string | null;
+  objectBeginDate: number | null;
+  objectEndDate: number | null;
+  timelineYear: number | null;
   likeCount: number;
   liked: boolean;
 };
@@ -62,17 +66,22 @@ router.get("/likes/most", async (req, res) => {
   if (req.query.voterId !== undefined && !voterId) {
     return res.status(400).json({ success: false, error: "Invalid voter ID" });
   }
+  const range = parseTimelineRange(req.query.fromYear, req.query.toYear);
+  if (range === "invalid") return res.status(400).json({ success: false, error: "Invalid timeline range" });
 
   try {
     const result = await db.execute(sql`
       WITH ranked AS (
         SELECT
-          "artworkId",
+          like_row."artworkId",
           COUNT(*)::integer AS "likeCount",
-          MIN("createdAt") AS "firstLikedAt"
-        FROM "met-galaxy_artwork_like"
-        GROUP BY "artworkId"
-        ORDER BY "likeCount" DESC, "firstLikedAt", "artworkId"
+          MIN(like_row."createdAt") AS "firstLikedAt"
+        FROM "met-galaxy_artwork_like" like_row
+        JOIN "met-galaxy_artwork" artwork
+          ON artwork.id = like_row."artworkId"
+        WHERE TRUE ${timelineFilter(range)}
+        GROUP BY like_row."artworkId"
+        ORDER BY "likeCount" DESC, "firstLikedAt", like_row."artworkId"
         LIMIT ${count}
       )
       SELECT
@@ -91,6 +100,9 @@ router.get("/likes/most", async (req, res) => {
         artwork."primaryImage",
         artwork."primaryImageSmall",
         artwork."objectUrl",
+        artwork."objectBeginDate",
+        artwork."objectEndDate",
+        ${timelineYearSql()} AS "timelineYear",
         ranked."likeCount",
         ${voterId
           ? sql`EXISTS (
@@ -128,12 +140,17 @@ router.get("/likes/most", async (req, res) => {
         originalImageUrl: getFullImageUrl(artwork),
         imageSource: getImageSource(artwork),
         objectUrl: artwork.objectUrl,
+        objectBeginDate: artwork.objectBeginDate,
+        objectEndDate: artwork.objectEndDate,
+        timelineYear: artwork.timelineYear,
         likeCount: artwork.likeCount,
         liked: artwork.liked,
       })),
     });
   } catch (error) {
-    console.error("[MOST-LIKED] Request failed:", error instanceof Error ? error.message : "Unknown error");
+    const nested = (error as { cause?: unknown })?.cause;
+    const cause = nested instanceof Error ? nested.message : null;
+    console.error("[MOST-LIKED] Request failed:", cause ?? (error instanceof Error ? error.message : "Unknown error"));
     res.status(500).json({ success: false, error: "Failed to fetch most liked artworks" });
   }
 });

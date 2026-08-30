@@ -7,6 +7,7 @@ import {
   hash32, mulberry32, gaussianVector, lerp, smoothstep,
   add, scale, normalize, pcaDirectionalBias
 } from "../lib/fieldVectors.js";
+import { parseTimelineRange, timelineFilter, type TimelineRange } from "../lib/timeline.js";
 
 const router = Router();
 let maxArtworkId: number | null = null;
@@ -32,6 +33,7 @@ const getCanonicalSimilarityPool = async (
   targetAssetId: number,
   limit: number,
   excludedIds: number[],
+  range: TimelineRange | null = null,
 ) => db.transaction(async (tx) => {
   await tx.execute(sql`SET LOCAL hnsw.ef_search = 100`);
   await tx.execute(sql`SET LOCAL hnsw.iterative_scan = 'strict_order'`);
@@ -69,6 +71,7 @@ const getCanonicalSimilarityPool = async (
       WHERE artwork."imageAssetId" = nearest."imageAssetId"
         AND artwork."localImageUrl" IS NOT NULL
         AND artwork."localImageUrl" <> ''
+        ${timelineFilter(range)}
         ${artworkExclusion(excludedIds)}
       ORDER BY artwork.id
       LIMIT 1
@@ -83,6 +86,7 @@ const getCanonicalRandomPool = async (
   targetAssetId: number,
   limit: number,
   excludedIds: number[],
+  range: TimelineRange | null = null,
 ) => {
   if (maxArtworkId === null) {
     const result = await db.execute(sql`SELECT MAX(id) AS id FROM "met-galaxy_artwork"`);
@@ -122,6 +126,7 @@ const getCanonicalRandomPool = async (
       AND asset."processingStatus" = 'ready'
       AND asset."imageEmbedding" IS NOT NULL
       AND mapping."assetId" IS NULL
+      ${timelineFilter(range)}
       ${artworkExclusion(excludedIds)}
     ORDER BY requested.position::integer
     LIMIT ${limit}
@@ -137,6 +142,8 @@ router.get("/field-chunk", async (req, res) => {
     const chunkY   = parseInt(req.query.chunkY as string);
     const count    = Math.min(Math.max(parseInt(req.query.count as string) || 20, 1), 50);
     const globalSeed = req.query.seed ? parseInt(req.query.seed as string) : 0;
+    const range = parseTimelineRange(req.query.fromYear, req.query.toYear);
+    if (range === "invalid") return res.status(400).json({ success: false, error: "Invalid timeline range" });
 
     if (!targetId || Number.isNaN(chunkX) || Number.isNaN(chunkY)) {
       return res.status(400).json({ success: false, error: "Bad params: targetId, chunkX, and chunkY are required" });
@@ -195,9 +202,9 @@ router.get("/field-chunk", async (req, res) => {
 
     // Pools
     const [simTight, simDrift, randPool] = await Promise.all([
-      getCanonicalSimilarityPool(vStr, target.imageAssetId!, 100, excludedIds),
-      getCanonicalSimilarityPool(vpStr, target.imageAssetId!, 80, excludedIds),
-      getCanonicalRandomPool(seed, target.imageAssetId!, 80, excludedIds),
+      getCanonicalSimilarityPool(vStr, target.imageAssetId!, 100, excludedIds, range),
+      getCanonicalSimilarityPool(vpStr, target.imageAssetId!, 80, excludedIds, range),
+      getCanonicalRandomPool(seed, target.imageAssetId!, 80, excludedIds, range),
     ]);
 
     const wSim = (1 - t) * (1 - t);
@@ -286,7 +293,9 @@ router.get("/field-chunk", async (req, res) => {
 router.post("/field-chunks", async (req, res) => {
   const start = Date.now();
   try {
-    const { targetId, chunks, count = 20, seed: globalSeed = 0, excludeIds = [] } = req.body;
+    const { targetId, chunks, count = 20, seed: globalSeed = 0, excludeIds = [], fromYear, toYear } = req.body;
+    const range = parseTimelineRange(fromYear, toYear);
+    if (range === "invalid") return res.status(400).json({ success: false, error: "Invalid timeline range" });
 
     // Validation
     if (!targetId || typeof targetId !== 'number') {
@@ -376,6 +385,7 @@ router.post("/field-chunks", async (req, res) => {
       target.imageAssetId!,
       simTightLimit,
       excludedIds,
+      range,
     );
 
     const preparedChunks = sortedChunks.map((chunk) => {
@@ -413,12 +423,14 @@ router.post("/field-chunks", async (req, res) => {
             target.imageAssetId!,
             perChunkPoolLimit,
             excludedIds,
+            range,
           );
           const random = await getCanonicalRandomPool(
             prepared.seed,
             target.imageAssetId!,
             perChunkPoolLimit,
             excludedIds,
+            range,
           );
           pools.set(`${prepared.chunk.x},${prepared.chunk.y}`, { drift, random });
         }

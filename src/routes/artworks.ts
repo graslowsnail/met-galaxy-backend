@@ -4,6 +4,7 @@ import { artworks, imageAssets } from '../db/schema.js';
 import { sql } from 'drizzle-orm';
 import { getFullImageUrl, getGraphImageUrl, getImageSource } from '../lib/imageUrls.js';
 import { hash32 } from '../lib/fieldVectors.js';
+import { parseTimelineRange, timelineFilter, timelineYearSql, type TimelineRange } from '../lib/timeline.js';
 
 const router = Router();
 let maxEligibleArtworkId: number | null = null;
@@ -31,6 +32,9 @@ type SampledArtwork = {
   primaryImage: string | null;
   primaryImageSmall: string | null;
   objectUrl: string | null;
+  objectBeginDate?: number | null;
+  objectEndDate?: number | null;
+  timelineYear?: number | null;
 };
 
 const transformArtwork = (artwork: Omit<SampledArtwork, 'chunkKey' | 'position'>) => ({
@@ -49,6 +53,9 @@ const transformArtwork = (artwork: Omit<SampledArtwork, 'chunkKey' | 'position'>
   originalImageUrl: getFullImageUrl(artwork),
   imageSource: getImageSource(artwork),
   objectUrl: artwork.objectUrl,
+  objectBeginDate: artwork.objectBeginDate ?? null,
+  objectEndDate: artwork.objectEndDate ?? null,
+  timelineYear: artwork.timelineYear ?? null,
   hasEmbedding: true,
 });
 
@@ -56,6 +63,7 @@ const sampleChunks = async (
   chunks: ChunkRequest[],
   count: number,
   globalSeed: number,
+  range: TimelineRange | null = null,
 ) => {
   if (maxEligibleArtworkId === null) {
     const maxIdResult = await db.execute(sql`
@@ -87,7 +95,26 @@ const sampleChunks = async (
     anchors.map((anchor) => sql`(${anchor.chunkKey}, ${anchor.position}, ${anchor.anchor})`),
     sql`, `,
   );
-  const sampledResult = await db.execute(sql`
+  const sampledResult = range ? await db.execute(sql`
+    WITH requested("chunkKey", position, anchor, "anchorYear") AS (
+      VALUES ${sql.join(anchors.map((anchor) => sql`(${anchor.chunkKey}, ${anchor.position}, ${anchor.anchor}, ${range.fromYear + (hash32(anchor.position, anchor.anchor, globalSeed) % (range.toYear - range.fromYear + 1))})`), sql`, `)}
+    )
+    SELECT requested."chunkKey", requested.position, artwork.*
+    FROM requested
+    JOIN LATERAL (
+      SELECT artwork.id, artwork."imageAssetId", artwork."objectId", artwork.title, artwork.artist,
+        artwork.date, artwork.department, artwork."creditLine", artwork.description, artwork."localImageUrl",
+        artwork."primaryImage", artwork."primaryImageSmall", artwork."objectUrl", artwork."objectBeginDate",
+        artwork."objectEndDate", ${timelineYearSql()} AS "timelineYear"
+      FROM "met-galaxy_artwork" artwork
+      WHERE ${timelineYearSql()} BETWEEN ${range.fromYear} AND ${range.toYear}
+        AND (${timelineYearSql()}, artwork.id) >= (requested."anchorYear"::integer, requested.anchor::integer)
+        AND artwork."localImageUrl" IS NOT NULL AND artwork."localImageUrl" <> ''
+        AND artwork."imgVec" IS NOT NULL AND artwork."imageAssetId" IS NOT NULL
+      ORDER BY ${timelineYearSql()}, artwork.id LIMIT 1
+    ) artwork ON TRUE
+    ORDER BY requested."chunkKey", requested.position::integer
+  `) : await db.execute(sql`
     WITH requested("chunkKey", position, anchor) AS (
       VALUES ${requestedValues}
     )
@@ -107,6 +134,7 @@ const sampleChunks = async (
       artwork."primaryImage",
       artwork."primaryImageSmall",
       artwork."objectUrl"
+      , artwork."objectBeginDate", artwork."objectEndDate", ${timelineYearSql()} AS "timelineYear"
     FROM requested
     JOIN "met-galaxy_artwork" artwork
       ON artwork.id = requested.anchor::integer
@@ -114,6 +142,7 @@ const sampleChunks = async (
       AND artwork."localImageUrl" <> ''
       AND artwork."imgVec" IS NOT NULL
       AND artwork."imageAssetId" IS NOT NULL
+      ${timelineFilter(range)}
     ORDER BY requested."chunkKey", requested.position::integer
   `);
 
@@ -137,6 +166,8 @@ router.post('/random-chunks', async (req, res) => {
   const chunks = Array.isArray(req.body?.chunks) ? req.body.chunks : [];
   const count = Math.min(Math.max(Number.parseInt(req.body?.count, 10) || 20, 1), 50);
   const globalSeed = Number.isSafeInteger(req.body?.seed) ? req.body.seed : 0;
+  const range = parseTimelineRange(req.body?.fromYear, req.body?.toYear);
+  if (range === "invalid") return res.status(400).json({ success: false, error: 'Invalid timeline range' });
   const validChunks: ChunkRequest[] = chunks
     .filter((chunk: unknown): chunk is ChunkRequest => {
       if (!chunk || typeof chunk !== 'object') return false;
@@ -150,7 +181,7 @@ router.post('/random-chunks', async (req, res) => {
   }
 
   try {
-    const grouped = await sampleChunks(validChunks, count, globalSeed);
+    const grouped = await sampleChunks(validChunks, count, globalSeed, range);
     const data = Object.fromEntries(
       validChunks.map((chunk: ChunkRequest) => [`${chunk.x},${chunk.y}`, grouped.get(`${chunk.x},${chunk.y}`) ?? []]),
     );
@@ -162,8 +193,52 @@ router.post('/random-chunks', async (req, res) => {
       meta: { chunkCount: validChunks.length, count, responseTime: `${responseTime}ms` },
     });
   } catch (error) {
-    console.error('[RANDOM-CHUNKS] Request failed:', error instanceof Error ? error.message : 'Unknown error');
+    const nested = (error as { cause?: unknown })?.cause;
+    const cause = nested instanceof Error ? nested.message : null;
+    console.error('[RANDOM-CHUNKS] Request failed:', cause ?? (error instanceof Error ? error.message : 'Unknown error'));
     res.status(500).json({ success: false, error: 'Failed to fetch random artwork chunks' });
+  }
+});
+
+router.get('/timeline-summary', async (req, res) => {
+  const range = parseTimelineRange(req.query.fromYear, req.query.toYear);
+  if (range === "invalid") return res.status(400).json({ success: false, error: 'Invalid timeline range' });
+  try {
+    const rows = await db.execute(sql`
+      SELECT
+        MIN(${timelineYearSql()})::integer AS "minYear",
+        MAX(${timelineYearSql()})::integer AS "maxYear",
+        COUNT(*)::integer AS total,
+        COUNT(*) FILTER (WHERE ${range ? sql`${timelineYearSql()} BETWEEN ${range.fromYear} AND ${range.toYear}` : sql`TRUE`})::integer AS "selectedCount"
+      FROM "met-galaxy_artwork" artwork
+      WHERE ${timelineYearSql()} IS NOT NULL
+        AND ${timelineYearSql()} <= ${new Date().getUTCFullYear()}
+        AND artwork."imageAssetId" IS NOT NULL
+        AND artwork."localImageUrl" IS NOT NULL
+        AND artwork."localImageUrl" <> ''
+    `);
+    const buckets = await db.execute(sql`
+      SELECT bucket AS "fromYear", (
+        SELECT COUNT(*)::integer FROM "met-galaxy_artwork" artwork
+        WHERE ${timelineYearSql()} BETWEEN bucket AND bucket + 99
+          AND artwork."imageAssetId" IS NOT NULL AND artwork."localImageUrl" IS NOT NULL AND artwork."localImageUrl" <> ''
+      ) AS count
+      FROM generate_series(-10000, ${new Date().getUTCFullYear()}, 100) bucket
+      ORDER BY bucket
+    `);
+    const deepTimeBuckets = await db.execute(sql`
+      SELECT ${timelineYearSql()}::integer AS "fromYear", COUNT(*)::integer AS count
+      FROM "met-galaxy_artwork" artwork
+      WHERE ${timelineYearSql()} < -10000
+        AND artwork."imageAssetId" IS NOT NULL
+        AND artwork."localImageUrl" IS NOT NULL
+        AND artwork."localImageUrl" <> ''
+      GROUP BY ${timelineYearSql()}
+      ORDER BY "fromYear"
+    `);
+    res.json({ success: true, data: { ...Array.from(rows)[0], buckets: Array.from(buckets), deepTimeBuckets: Array.from(deepTimeBuckets) } });
+  } catch (error) {
+    res.status(500).json({ success: false, error: 'Failed to load timeline summary' });
   }
 });
 
@@ -208,6 +283,7 @@ router.post('/by-ids', async (req, res) => {
         artwork."primaryImage",
         artwork."primaryImageSmall",
         artwork."objectUrl"
+        , artwork."objectBeginDate", artwork."objectEndDate", ${timelineYearSql()} AS "timelineYear"
       FROM requested
       JOIN "met-galaxy_artwork" artwork
         ON artwork.id = requested.id::integer
@@ -486,6 +562,8 @@ router.get('/canonical/:assetId', async (req, res) => {
         localImageUrl: artworks.localImageUrl,
         primaryImage: artworks.primaryImage,
         objectUrl: artworks.objectUrl,
+        objectBeginDate: artworks.objectBeginDate,
+        objectEndDate: artworks.objectEndDate,
         duplicateState: artworks.imageDuplicateState,
       })
       .from(artworks)

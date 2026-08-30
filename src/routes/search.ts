@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import OpenAI from "openai";
 import { db } from "../db/index.js";
 import { getFullImageUrl, getGraphImageUrl } from "../lib/imageUrls.js";
+import { parseTimelineRange, timelineYearSql } from "../lib/timeline.js";
 
 const router = Router();
 
@@ -499,6 +500,8 @@ router.get("/search", async (req, res) => {
     }
 
     const query = rawQuery.slice(0, 500);
+    const range = parseTimelineRange(req.query.fromYear, req.query.toYear);
+    if (range === "invalid") return res.status(400).json({ success: false, error: "Invalid timeline range" });
     const count = Math.trunc(
       parseNumber(req.query.count, 50, 1, 100),
     );
@@ -520,7 +523,7 @@ router.get("/search", async (req, res) => {
     const rrfK = Math.trunc(
       parseNumber(req.query.k_rrf, 60, 1, 1000),
     );
-    const signature = JSON.stringify({ query, weights, rrfK });
+    const signature = JSON.stringify({ query, weights, rrfK, range });
     const cursor =
       typeof req.query.cursor === "string" ? req.query.cursor : null;
     const offset = cursor ? decodeCursor(cursor, signature) : 0;
@@ -619,7 +622,16 @@ router.get("/search", async (req, res) => {
       },
     ].filter((ranking) => ranking.weight > 0 && ranking.results.length > 0);
     const fusionStartedAt = Date.now();
-    const fused = fuseRankings(rankings, rrfK);
+    let fused = fuseRankings(rankings, rrfK);
+    if (range && fused.length > 0) {
+      const allowed = await db.execute(sql`
+        SELECT id FROM "met-galaxy_artwork"
+        WHERE id IN (${sql.join(fused.map((item) => sql`${item.id}`), sql`, `)})
+          AND ${timelineYearSql('"met-galaxy_artwork"')} BETWEEN ${range.fromYear} AND ${range.toYear}
+      `);
+      const allowedIds = new Set(Array.from(allowed).map((row) => Number(row.id)));
+      fused = fused.filter((item) => allowedIds.has(item.id));
+    }
     const page = fused.slice(offset, offset + count);
     const hasMore = fused.length > offset + count;
     const fusionTime = Date.now() - fusionStartedAt;

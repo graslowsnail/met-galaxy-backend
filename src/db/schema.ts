@@ -300,6 +300,9 @@ export const artworks = createTable(
       table.searchDocument,
     ),
     index("idx_artworks_object_id").on(table.objectId),
+    index("idx_artworks_timeline_year_id")
+      .on(sql`(CASE WHEN ${table.objectBeginDate} IS NULL THEN ${table.objectEndDate} WHEN ${table.objectEndDate} IS NULL THEN ${table.objectBeginDate} ELSE floor((least(${table.objectBeginDate}, ${table.objectEndDate}) + greatest(${table.objectBeginDate}, ${table.objectEndDate})) / 2.0)::integer END)`, table.id)
+      .where(sql`${table.imageAssetId} IS NOT NULL AND ${table.localImageUrl} IS NOT NULL AND ${table.localImageUrl} <> ''`),
     check(
       "chk_artworks_txt_vec_attempt_count",
       sql`${table.txtVecAttemptCount} >= 0`,

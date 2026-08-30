@@ -67,9 +67,9 @@ app.get('/', (req, res) => {
 
 // API Routes
 app.use('/api/artworks', likesRouter);
-app.use('/api/artworks', artworksRouter);
-app.use('/api/artworks', fieldChunkRouter);
 app.use('/api/artworks', searchRouter);
+app.use('/api/artworks', fieldChunkRouter);
+app.use('/api/artworks', artworksRouter);
 
 // Test database connection endpoint
 app.get('/api/test-db', async (req, res) => {
@@ -109,4 +109,3 @@ app.listen(PORT, () => {
        GET  /api/artworks/search?q=...
   `);
 });
-
