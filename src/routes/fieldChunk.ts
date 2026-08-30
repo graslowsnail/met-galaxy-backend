@@ -9,8 +9,7 @@ import {
 } from "../lib/fieldVectors.js";
 
 const router = Router();
-
-const seedToPgFloat = (seed: number) => (seed >>> 0) / 4294967296;
+let maxArtworkId: number | null = null;
 
 type CanonicalPoolArtwork = {
   id: number;
@@ -34,7 +33,7 @@ const getCanonicalSimilarityPool = async (
   limit: number,
   excludedIds: number[],
 ) => db.transaction(async (tx) => {
-  await tx.execute(sql`SET LOCAL hnsw.ef_search = 200`);
+  await tx.execute(sql`SET LOCAL hnsw.ef_search = 100`);
   await tx.execute(sql`SET LOCAL hnsw.iterative_scan = 'strict_order'`);
   await tx.execute(sql`SET LOCAL hnsw.max_scan_tuples = 50000`);
   await tx.execute(sql`SET LOCAL enable_seqscan = off`);
@@ -84,47 +83,51 @@ const getCanonicalRandomPool = async (
   targetAssetId: number,
   limit: number,
   excludedIds: number[],
-) => db.transaction(async (tx) => {
-  await tx.execute(sql`SELECT setseed(${seedToPgFloat(seed)})`);
-  const rows = await tx.execute(sql`
-    WITH randomized AS MATERIALIZED (
-      SELECT
-        asset.id AS "imageAssetId",
-        RANDOM() AS random_rank
-      FROM "met-galaxy_image_asset" asset
-      LEFT JOIN "met-galaxy_image_asset_canonical" mapping
-        ON mapping."assetId" = asset.id
-      WHERE asset.id <> ${targetAssetId}
-        AND asset."processingStatus" = 'ready'
-        AND asset."imageEmbedding" IS NOT NULL
-        AND mapping."assetId" IS NULL
-      ORDER BY random_rank, asset.id
-      LIMIT ${limit}
-    )
+) => {
+  if (maxArtworkId === null) {
+    const result = await db.execute(sql`SELECT MAX(id) AS id FROM "met-galaxy_artwork"`);
+    maxArtworkId = Number((Array.from(result)[0] as { id?: number } | undefined)?.id ?? 0);
+  }
+  if (maxArtworkId === 0) return [];
+
+  const anchors = Array.from({ length: limit * 2 }, (_, position) => ({
+    position,
+    id: 1 + (hash32(seed, position) % maxArtworkId!),
+  }));
+  const requestedValues = sql.join(
+    anchors.map((anchor) => sql`(${anchor.position}, ${anchor.id})`),
+    sql`, `,
+  );
+  const rows = await db.execute(sql`
+    WITH requested(position, id) AS (VALUES ${requestedValues})
     SELECT
       artwork.id,
-      randomized."imageAssetId",
+      artwork."imageAssetId",
       artwork."objectId",
       artwork.title,
       artwork.artist,
       artwork."localImageUrl",
       artwork."primaryImage",
       artwork."primaryImageSmall"
-    FROM randomized
-    CROSS JOIN LATERAL (
-      SELECT artwork.*
-      FROM "met-galaxy_artwork" artwork
-      WHERE artwork."imageAssetId" = randomized."imageAssetId"
-        AND artwork."localImageUrl" IS NOT NULL
-        AND artwork."localImageUrl" <> ''
-        ${artworkExclusion(excludedIds)}
-      ORDER BY artwork.id
-      LIMIT 1
-    ) artwork
-    ORDER BY randomized.random_rank, artwork.id
+    FROM requested
+    JOIN "met-galaxy_artwork" artwork
+      ON artwork.id = requested.id::integer
+    JOIN "met-galaxy_image_asset" asset
+      ON asset.id = artwork."imageAssetId"
+    LEFT JOIN "met-galaxy_image_asset_canonical" mapping
+      ON mapping."assetId" = asset.id
+    WHERE artwork."imageAssetId" <> ${targetAssetId}
+      AND artwork."localImageUrl" IS NOT NULL
+      AND artwork."localImageUrl" <> ''
+      AND asset."processingStatus" = 'ready'
+      AND asset."imageEmbedding" IS NOT NULL
+      AND mapping."assetId" IS NULL
+      ${artworkExclusion(excludedIds)}
+    ORDER BY requested.position::integer
+    LIMIT ${limit}
   `);
   return Array.from(rows) as CanonicalPoolArtwork[];
-});
+};
 
 router.get("/field-chunk", async (req, res) => {
   const start = Date.now();
@@ -192,9 +195,9 @@ router.get("/field-chunk", async (req, res) => {
 
     // Pools
     const [simTight, simDrift, randPool] = await Promise.all([
-      getCanonicalSimilarityPool(vStr, target.imageAssetId!, 200, excludedIds),
-      getCanonicalSimilarityPool(vpStr, target.imageAssetId!, 400, excludedIds),
-      getCanonicalRandomPool(seed, target.imageAssetId!, 800, excludedIds),
+      getCanonicalSimilarityPool(vStr, target.imageAssetId!, 100, excludedIds),
+      getCanonicalSimilarityPool(vpStr, target.imageAssetId!, 80, excludedIds),
+      getCanonicalRandomPool(seed, target.imageAssetId!, 80, excludedIds),
     ]);
 
     const wSim = (1 - t) * (1 - t);
@@ -360,59 +363,83 @@ router.post("/field-chunks", async (req, res) => {
       r: Math.hypot(chunk.x, chunk.y)
     })).sort((a, b) => a.r - b.r);
 
-    // Scale pool sizes based on chunk count
-    const simTightLimit = Math.min(500, chunks.length * 125);
-    const simDriftLimit = Math.min(800, chunks.length * 200);
-    const randLimit = Math.min(1200, chunks.length * 300);
+    const simTightLimit = Math.min(
+      400,
+      Math.max(actualCount * 4, chunks.length * actualCount * 2),
+    );
+    const perChunkPoolLimit = Math.min(160, Math.max(actualCount * 4, 60));
 
     // Generate global pools
     const vStr = `[${Array.from(v).join(',')}]`;
-    const globalSimTight = await getCanonicalSimilarityPool(
+    const globalSimTightPromise = getCanonicalSimilarityPool(
       vStr,
       target.imageAssetId!,
       simTightLimit,
       excludedIds,
     );
 
-    // Process each chunk
-    const results: Record<string, any> = {};
-    const overallT = chunks.reduce((sum, chunk) => sum + smoothstep(1.5, 12.0, Math.hypot(chunk.x, chunk.y)), 0) / chunks.length;
-
-    for (let chunkIndex = 0; chunkIndex < sortedChunks.length; chunkIndex++) {
-      const chunk = sortedChunks[chunkIndex];
-      const { x: chunkX, y: chunkY } = chunk;
-      
-      // Field coordinates
-      const r = Math.hypot(chunkX, chunkY);
+    const preparedChunks = sortedChunks.map((chunk) => {
+      const r = Math.hypot(chunk.x, chunk.y);
       const t = smoothstep(1.5, 12.0, r);
-      const theta = Math.atan2(chunkY, chunkX);
-
-      // Chunk-specific seed and RNG
-      const seed = hash32(targetId, chunkX, chunkY, globalSeed);
+      const theta = Math.atan2(chunk.y, chunk.x);
+      const seed = hash32(targetId, chunk.x, chunk.y, globalSeed);
       const rng = mulberry32(seed);
-
-      // Generate perturbed vector for this chunk
       const bias = pcaDirectionalBias(theta, t);
       const sigma = lerp(0.05, 0.35, t);
       const eps = gaussianVector(d, rng);
       const vprime = normalize(add(add(v, bias), scale(eps, sigma)));
-      const vpStr = `[${Array.from(vprime).join(',')}]`;
-
-      // Generate drift pool for this chunk
-      const chunkSimDrift = await getCanonicalSimilarityPool(
-        vpStr,
-        target.imageAssetId!,
-        Math.min(400, simDriftLimit),
-        excludedIds,
-      );
-
-      // Generate random pool for this chunk
-      const chunkRandPool = await getCanonicalRandomPool(
+      return {
+        chunk,
+        r,
+        t,
+        theta,
         seed,
-        target.imageAssetId!,
-        Math.min(800, randLimit),
-        excludedIds,
-      );
+        rng,
+        vector: `[${Array.from(vprime).join(',')}]`,
+      };
+    });
+    const pools = new Map<string, {
+      drift: CanonicalPoolArtwork[];
+      random: CanonicalPoolArtwork[];
+    }>();
+    let nextPoolIndex = 0;
+    const poolWorkers = Array.from(
+      { length: Math.min(6, preparedChunks.length) },
+      async () => {
+        while (nextPoolIndex < preparedChunks.length) {
+          const prepared = preparedChunks[nextPoolIndex++];
+          const drift = await getCanonicalSimilarityPool(
+            prepared.vector,
+            target.imageAssetId!,
+            perChunkPoolLimit,
+            excludedIds,
+          );
+          const random = await getCanonicalRandomPool(
+            prepared.seed,
+            target.imageAssetId!,
+            perChunkPoolLimit,
+            excludedIds,
+          );
+          pools.set(`${prepared.chunk.x},${prepared.chunk.y}`, { drift, random });
+        }
+      },
+    );
+    const [globalSimTight] = await Promise.all([
+      globalSimTightPromise,
+      Promise.all(poolWorkers),
+    ]);
+
+    const results: Record<string, any> = {};
+    const overallT = chunks.reduce((sum, chunk) => sum + smoothstep(1.5, 12.0, Math.hypot(chunk.x, chunk.y)), 0) / chunks.length;
+
+    for (let chunkIndex = 0; chunkIndex < preparedChunks.length; chunkIndex++) {
+      const prepared = preparedChunks[chunkIndex];
+      const chunk = prepared.chunk;
+      const { x: chunkX, y: chunkY } = chunk;
+      const { r, t, theta, rng } = prepared;
+      const chunkPools = pools.get(`${chunkX},${chunkY}`)!;
+      const chunkSimDrift = chunkPools.drift;
+      const chunkRandPool = chunkPools.random;
 
       // Enhanced spatial partitioning for better deduplication
       const getSpatialOffset = (cx: number, cy: number, globalSd: number, chIdx: number) => {

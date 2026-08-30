@@ -3,79 +3,256 @@ import { db } from '../db/index.js';
 import { artworks, imageAssets } from '../db/schema.js';
 import { sql } from 'drizzle-orm';
 import { getFullImageUrl, getGraphImageUrl, getImageSource } from '../lib/imageUrls.js';
+import { hash32 } from '../lib/fieldVectors.js';
 
 const router = Router();
+let maxEligibleArtworkId: number | null = null;
 
-// GET /api/artworks/random - Optimized random artworks for grid with STABLE ordering
+type ChunkRequest = {
+  x: number;
+  y: number;
+};
+
+type SampledArtwork = {
+  chunkKey: string;
+  position: number;
+  id: number;
+  imageAssetId: number;
+  objectId: number;
+  title: string | null;
+  artist: string | null;
+  date: string | null;
+  department: string | null;
+  culture?: string | null;
+  medium?: string | null;
+  creditLine: string | null;
+  description: string | null;
+  localImageUrl: string;
+  primaryImage: string | null;
+  primaryImageSmall: string | null;
+  objectUrl: string | null;
+};
+
+const transformArtwork = (artwork: Omit<SampledArtwork, 'chunkKey' | 'position'>) => ({
+  id: artwork.id,
+  canonicalAssetId: artwork.imageAssetId,
+  objectId: artwork.objectId,
+  title: artwork.title,
+  artist: artwork.artist,
+  date: artwork.date,
+  department: artwork.department,
+  culture: artwork.culture ?? null,
+  medium: artwork.medium ?? null,
+  creditLine: artwork.creditLine,
+  description: artwork.description,
+  imageUrl: getGraphImageUrl(artwork),
+  originalImageUrl: getFullImageUrl(artwork),
+  imageSource: getImageSource(artwork),
+  objectUrl: artwork.objectUrl,
+  hasEmbedding: true,
+});
+
+const sampleChunks = async (
+  chunks: ChunkRequest[],
+  count: number,
+  globalSeed: number,
+) => {
+  if (maxEligibleArtworkId === null) {
+    const maxIdResult = await db.execute(sql`
+      SELECT artwork.id
+      FROM "met-galaxy_artwork" artwork
+      WHERE artwork."localImageUrl" IS NOT NULL
+        AND artwork."localImageUrl" <> ''
+        AND artwork."imgVec" IS NOT NULL
+        AND artwork."imageAssetId" IS NOT NULL
+      ORDER BY artwork.id DESC
+      LIMIT 1
+    `);
+    maxEligibleArtworkId = Number(
+      (Array.from(maxIdResult)[0] as { id?: number } | undefined)?.id ?? 0,
+    );
+  }
+  const maxId = maxEligibleArtworkId;
+  if (maxId === 0) return new Map<string, ReturnType<typeof transformArtwork>[]>();
+
+  const candidatesPerChunk = count * 2;
+  const anchors = chunks.flatMap((chunk) =>
+    Array.from({ length: candidatesPerChunk }, (_, position) => ({
+      chunkKey: `${chunk.x},${chunk.y}`,
+      position,
+      anchor: 1 + (hash32(chunk.x, chunk.y, globalSeed, position) % maxId),
+    })),
+  );
+  const requestedValues = sql.join(
+    anchors.map((anchor) => sql`(${anchor.chunkKey}, ${anchor.position}, ${anchor.anchor})`),
+    sql`, `,
+  );
+  const sampledResult = await db.execute(sql`
+    WITH requested("chunkKey", position, anchor) AS (
+      VALUES ${requestedValues}
+    )
+    SELECT
+      requested."chunkKey",
+      requested.position,
+      artwork.id,
+      artwork."imageAssetId",
+      artwork."objectId",
+      artwork.title,
+      artwork.artist,
+      artwork.date,
+      artwork.department,
+      artwork."creditLine",
+      artwork.description,
+      artwork."localImageUrl",
+      artwork."primaryImage",
+      artwork."primaryImageSmall",
+      artwork."objectUrl"
+    FROM requested
+    JOIN "met-galaxy_artwork" artwork
+      ON artwork.id = requested.anchor::integer
+      AND artwork."localImageUrl" IS NOT NULL
+      AND artwork."localImageUrl" <> ''
+      AND artwork."imgVec" IS NOT NULL
+      AND artwork."imageAssetId" IS NOT NULL
+    ORDER BY requested."chunkKey", requested.position::integer
+  `);
+
+  const grouped = new Map<string, ReturnType<typeof transformArtwork>[]>();
+  const seenAssets = new Map<string, Set<number>>();
+  for (const row of Array.from(sampledResult) as SampledArtwork[]) {
+    const artworksForChunk = grouped.get(row.chunkKey) ?? [];
+    if (artworksForChunk.length >= count) continue;
+    const chunkAssets = seenAssets.get(row.chunkKey) ?? new Set<number>();
+    if (chunkAssets.has(row.imageAssetId)) continue;
+    chunkAssets.add(row.imageAssetId);
+    seenAssets.set(row.chunkKey, chunkAssets);
+    artworksForChunk.push(transformArtwork(row));
+    grouped.set(row.chunkKey, artworksForChunk);
+  }
+  return grouped;
+};
+
+router.post('/random-chunks', async (req, res) => {
+  const startTime = Date.now();
+  const chunks = Array.isArray(req.body?.chunks) ? req.body.chunks : [];
+  const count = Math.min(Math.max(Number.parseInt(req.body?.count, 10) || 20, 1), 50);
+  const globalSeed = Number.isSafeInteger(req.body?.seed) ? req.body.seed : 0;
+  const validChunks: ChunkRequest[] = chunks
+    .filter((chunk: unknown): chunk is ChunkRequest => {
+      if (!chunk || typeof chunk !== 'object') return false;
+      const candidate = chunk as ChunkRequest;
+      return Number.isSafeInteger(candidate.x) && Number.isSafeInteger(candidate.y);
+    })
+    .slice(0, 24);
+
+  if (validChunks.length === 0) {
+    return res.status(400).json({ success: false, error: 'At least one valid chunk is required' });
+  }
+
+  try {
+    const grouped = await sampleChunks(validChunks, count, globalSeed);
+    const data = Object.fromEntries(
+      validChunks.map((chunk: ChunkRequest) => [`${chunk.x},${chunk.y}`, grouped.get(`${chunk.x},${chunk.y}`) ?? []]),
+    );
+    const responseTime = Date.now() - startTime;
+    console.log(`🎲 [RANDOM-CHUNKS] ${validChunks.length} chunks | ${responseTime}ms`);
+    res.json({
+      success: true,
+      data,
+      meta: { chunkCount: validChunks.length, count, responseTime: `${responseTime}ms` },
+    });
+  } catch (error) {
+    console.error('[RANDOM-CHUNKS] Request failed:', error instanceof Error ? error.message : 'Unknown error');
+    res.status(500).json({ success: false, error: 'Failed to fetch random artwork chunks' });
+  }
+});
+
+router.post('/by-ids', async (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids : [];
+  const validIds = ids
+    .filter((id: unknown): id is number => (
+      typeof id === 'number' && Number.isSafeInteger(id) && id > 0
+    ))
+    .slice(0, 100);
+
+  if (validIds.length === 0 || validIds.length !== ids.length) {
+    return res.status(400).json({
+      success: false,
+      error: 'One to 100 valid artwork IDs are required',
+    });
+  }
+
+  try {
+    const requestedValues = sql.join(
+      validIds.map((id: number, position: number) => sql`(${position}, ${id})`),
+      sql`, `,
+    );
+    const result = await db.execute(sql`
+      WITH requested(position, id) AS (
+        VALUES ${requestedValues}
+      )
+      SELECT
+        requested.position,
+        artwork.id,
+        artwork."imageAssetId",
+        artwork."objectId",
+        artwork.title,
+        artwork.artist,
+        artwork.date,
+        artwork.department,
+        artwork.culture,
+        artwork.medium,
+        artwork."creditLine",
+        artwork.description,
+        artwork."localImageUrl",
+        artwork."primaryImage",
+        artwork."primaryImageSmall",
+        artwork."objectUrl"
+      FROM requested
+      JOIN "met-galaxy_artwork" artwork
+        ON artwork.id = requested.id::integer
+        AND artwork."imageAssetId" IS NOT NULL
+        AND artwork."localImageUrl" IS NOT NULL
+        AND artwork."localImageUrl" <> ''
+      ORDER BY requested.position::integer
+    `);
+    const rows = Array.from(result) as Array<SampledArtwork & { position: number }>;
+
+    if (rows.length !== validIds.length) {
+      return res.status(404).json({
+        success: false,
+        error: 'One or more artworks were not found',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: rows.map(transformArtwork),
+    });
+  } catch (error) {
+    console.error(
+      '[ARTWORKS-BY-IDS] Request failed:',
+      error instanceof Error ? error.message : 'Unknown error',
+    );
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch artworks',
+    });
+  }
+});
+
+// GET /api/artworks/random - Random artworks with stable indexed sampling
 router.get('/random', async (req, res) => {
   const startTime = Date.now();
-  
+
   try {
-    
-    // Parse and validate query parameters
     const count = Math.min(Math.max(parseInt(req.query.count as string) || 5, 1), 500);
     const seed = parseInt(req.query.seed as string) || Math.floor(Math.random() * 1000000);
-    const withImages = req.query.withImages !== 'false'; // Default true
-    
-
-    // Use seed for consistent randomization - set seed first, then random order
-    await db.execute(sql`SELECT setseed(${seed / 1000000.0})`);
-    
-    const result = await db
-      .select({
-        id: artworks.id,
-        imageAssetId: artworks.imageAssetId,
-        objectId: artworks.objectId,
-        title: artworks.title,
-        artist: artworks.artist,
-        date: artworks.date,
-        department: artworks.department,
-        creditLine: artworks.creditLine,
-        description: artworks.description,
-        localImageUrl: artworks.localImageUrl,
-        primaryImage: artworks.primaryImage,
-        primaryImageSmall: artworks.primaryImageSmall,
-        objectUrl: artworks.objectUrl,
-      })
-      .from(artworks)
-      .where(sql`"localImageUrl" IS NOT NULL AND "localImageUrl" != '' AND "imgVec" IS NOT NULL`)
-      // CRITICAL FIX: Add deterministic secondary ordering by ID to ensure stable order
-      .orderBy(sql`RANDOM(), id ASC`)
-      .limit(count * 2);
-
-    const seenAssets = new Set<number>();
-    const canonicalResult = result.filter((artwork) => {
-      if (
-        artwork.imageAssetId === null
-        || seenAssets.has(artwork.imageAssetId)
-      ) {
-        return false;
-      }
-      seenAssets.add(artwork.imageAssetId);
-      return true;
-    }).slice(0, count);
-
-    console.log(`🎲 [RANDOM] ${result.length} artworks | seed=${seed} | ${Date.now() - startTime}ms`);
-
-    // Transform the data to match API spec
-    const transformedData = canonicalResult.map(artwork => ({
-      id: artwork.id,
-      canonicalAssetId: artwork.imageAssetId,
-      objectId: artwork.objectId,
-      title: artwork.title,
-      artist: artwork.artist,
-      date: artwork.date,
-      department: artwork.department,
-      creditLine: artwork.creditLine,
-      description: artwork.description,
-      imageUrl: getGraphImageUrl(artwork),
-      originalImageUrl: getFullImageUrl(artwork),
-      imageSource: getImageSource(artwork),
-      objectUrl: artwork.objectUrl,
-      hasEmbedding: true, // Always true since we filter for imgVec
-    }));
-
+    const chunkKey = `${seed},0`;
+    const sampled = await sampleChunks([{ x: seed, y: 0 }], count, seed);
+    const transformedData = sampled.get(chunkKey) ?? [];
     const responseTime = Date.now() - startTime;
+    console.log(`🎲 [RANDOM] ${transformedData.length} artworks | seed=${seed} | ${responseTime}ms`);
 
     res.json({
       success: true,
@@ -337,6 +514,72 @@ router.get('/canonical/:assetId', async (req, res) => {
     res.status(500).json({
       success: false,
       error: 'Failed to fetch canonical image asset',
+    });
+  }
+});
+
+router.get('/:id', async (req, res) => {
+  const artworkId = Number.parseInt(req.params.id, 10);
+  if (!Number.isSafeInteger(artworkId) || artworkId <= 0) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid artwork ID',
+    });
+  }
+
+  try {
+    const [artwork] = await db
+      .select({
+        id: artworks.id,
+        imageAssetId: artworks.imageAssetId,
+        objectId: artworks.objectId,
+        title: artworks.title,
+        artist: artworks.artist,
+        date: artworks.date,
+        department: artworks.department,
+        culture: artworks.culture,
+        medium: artworks.medium,
+        creditLine: artworks.creditLine,
+        description: artworks.description,
+        localImageUrl: artworks.localImageUrl,
+        primaryImage: artworks.primaryImage,
+        primaryImageSmall: artworks.primaryImageSmall,
+        objectUrl: artworks.objectUrl,
+      })
+      .from(artworks)
+      .where(sql`${artworks.id} = ${artworkId}
+        AND ${artworks.imageAssetId} IS NOT NULL
+        AND ${artworks.localImageUrl} IS NOT NULL
+        AND ${artworks.localImageUrl} <> ''`)
+      .limit(1);
+
+    if (!artwork || artwork.imageAssetId === null || artwork.localImageUrl === null) {
+      return res.status(404).json({
+        success: false,
+        error: 'Artwork not found',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        ...transformArtwork({
+          ...artwork,
+          imageAssetId: artwork.imageAssetId,
+          localImageUrl: artwork.localImageUrl,
+        }),
+        culture: artwork.culture,
+        medium: artwork.medium,
+      },
+    });
+  } catch (error) {
+    console.error(
+      '[ARTWORK] Request failed:',
+      error instanceof Error ? error.message : 'Unknown error',
+    );
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch artwork',
     });
   }
 });

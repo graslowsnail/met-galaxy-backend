@@ -307,6 +307,25 @@ export const artworks = createTable(
   ],
 );
 
+export const artworkLikes = createTable(
+  "artwork_like",
+  {
+    artworkId: integer("artworkId")
+      .notNull()
+      .references(() => artworks.id, { onDelete: "cascade" }),
+    voterId: varchar("voterId", { length: 128 }).notNull(),
+    createdAt: timestamp("createdAt", { withTimezone: true })
+      .default(sql`CURRENT_TIMESTAMP`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({
+      name: "pk_artwork_likes_artwork_voter",
+      columns: [table.artworkId, table.voterId],
+    }),
+  ],
+);
+
 export const imageIngestions = createTable(
   "image_ingestion",
   {
