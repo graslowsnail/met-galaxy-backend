@@ -25,9 +25,12 @@ try {
 const app = express();
 const PORT = process.env.PORT || 8080;
 
-// Railway fronts the app with a single proxy hop; req.ip must come from that hop
-// rather than a client-supplied X-Forwarded-For, or per-IP limits are spoofable.
-app.set("trust proxy", process.env.NODE_ENV === "development" ? false : 1);
+// Railway fronts the app with two proxy hops, so X-Forwarded-For arrives as
+// "<real client>, <railway edge>" and req.ip must resolve to the leftmost entry.
+// Verified safe: Railway's edge discards any X-Forwarded-For the caller sends,
+// so a client cannot pad the chain to make req.ip resolve to a value it controls.
+// If per-IP limits ever start blocking unrelated users, re-check this hop count.
+app.set("trust proxy", process.env.NODE_ENV === "development" ? false : 2);
 
 // CORS configuration
 app.use(
