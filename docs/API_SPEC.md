@@ -243,7 +243,17 @@ The `imageSource` field indicates which source was used:
 - **Similar endpoint**: Uses pgvector for fast similarity search (<200ms)
 - **Search endpoint**: Text-to-image search, slower but powerful (<500ms)
 - **Caching**: Responses cached for 5 minutes for repeated requests
-- **Rate limiting**: 100 requests per minute per IP
+- **Rate limiting**: Only like mutations (`POST`/`DELETE /api/artworks/likes/:id`) are limited — 100 per 10 minutes per IP and 40 per 10 minutes per voter ID, in-memory per instance. Read endpoints are not rate limited.
+
+## Like Mutation Requirements
+
+`POST` and `DELETE /api/artworks/likes/:artworkId` additionally require:
+
+- An `Origin` header matching an allowed origin (`CORS_ORIGINS`, or the localhost origins in development)
+- A `X-Met-Galaxy-Client: web` header
+- `Sec-Fetch-Site` must not be `none`
+
+Failing any of these returns `403 { "success": false, "error": "Request origin is not allowed" }`. Exceeding a rate limit returns `429` with `RateLimit` headers.
 
 ---
 

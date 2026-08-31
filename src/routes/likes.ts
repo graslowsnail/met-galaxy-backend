@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { db } from "../db/index.js";
 import { getFullImageUrl, getGraphImageUrl, getImageSource } from "../lib/imageUrls.js";
 import { parseTimelineRange, timelineFilter, timelineYearSql } from "../lib/timeline.js";
+import { likeIpRateLimit, likeVoterRateLimit, requireTrustedOrigin } from "../middleware/likeGuards.js";
 
 const router = Router();
 const VOTER_ID_PATTERN = /^[a-zA-Z0-9_-]{16,128}$/;
@@ -30,7 +31,8 @@ type LikedArtworkRow = {
   liked: boolean;
 };
 
-const parseArtworkId = (value: string) => {
+const parseArtworkId = (value: unknown) => {
+  if (typeof value !== "string") return null;
   const artworkId = Number.parseInt(value, 10);
   return Number.isSafeInteger(artworkId) && artworkId > 0 ? artworkId : null;
 };
@@ -170,7 +172,7 @@ router.get("/likes/:artworkId", async (req, res) => {
   }
 });
 
-router.post("/likes/:artworkId", async (req, res) => {
+router.post("/likes/:artworkId", requireTrustedOrigin, likeIpRateLimit, likeVoterRateLimit, async (req, res) => {
   const artworkId = parseArtworkId(req.params.artworkId);
   const voterId = parseVoterId(req.body?.voterId);
   if (!artworkId || !voterId) {
@@ -192,7 +194,7 @@ router.post("/likes/:artworkId", async (req, res) => {
   }
 });
 
-router.delete("/likes/:artworkId", async (req, res) => {
+router.delete("/likes/:artworkId", requireTrustedOrigin, likeIpRateLimit, likeVoterRateLimit, async (req, res) => {
   const artworkId = parseArtworkId(req.params.artworkId);
   const voterId = parseVoterId(req.body?.voterId);
   if (!artworkId || !voterId) {

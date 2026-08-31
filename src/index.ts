@@ -8,6 +8,8 @@ import fieldChunkRouter from "./routes/fieldChunk.js";
 import searchRouter from "./routes/search.js";
 import likesRouter from "./routes/likes.js";
 import { loadPCABasisFromFile } from "./lib/fieldVectors.js";
+import { allowedOrigins } from "./lib/allowedOrigins.js";
+import { CLIENT_HEADER } from "./middleware/likeGuards.js";
 
 // Load environment variables
 dotenv.config();
@@ -23,20 +25,17 @@ try {
 const app = express();
 const PORT = process.env.PORT || 8080;
 
+// Railway fronts the app with a single proxy hop; req.ip must come from that hop
+// rather than a client-supplied X-Forwarded-For, or per-IP limits are spoofable.
+app.set("trust proxy", process.env.NODE_ENV === "development" ? false : 1);
+
 // CORS configuration
 app.use(
   cors({
-    origin:
-      process.env.NODE_ENV === "development"
-        ? [
-            "http://localhost:3000",
-            "http://localhost:3001",
-            "http://127.0.0.1:3000",
-          ]
-        : process.env.CORS_ORIGINS?.split(',') || ["https://openmetropolitan.com"],
+    origin: allowedOrigins,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cookie", CLIENT_HEADER],
   })
 );
 
@@ -50,7 +49,11 @@ app.get('/health', (req, res) => {
             status: 'healthy',
             timestamp: new Date().toISOString(),
             uptime: process.uptime(),
-            environment: process.env.NODE_ENV || 'development'
+            environment: process.env.NODE_ENV || 'development',
+            client: {
+                ip: req.ip ?? null,
+                forwardedFor: req.get('x-forwarded-for') ?? null
+            }
         },
         message: 'Server is running'
     });
