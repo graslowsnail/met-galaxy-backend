@@ -596,6 +596,58 @@ router.get('/canonical/:assetId', async (req, res) => {
   }
 });
 
+// GET /api/artworks/ids - paged id list for sitemap generation.
+// Must stay above '/:id', which would otherwise match 'ids'.
+const SITEMAP_PAGE_SIZE = 50_000;
+
+router.get('/ids', async (req, res) => {
+  const requestedLimit = Number.parseInt(String(req.query.limit ?? ''), 10);
+  const requestedOffset = Number.parseInt(String(req.query.offset ?? ''), 10);
+  const limit = Number.isSafeInteger(requestedLimit) && requestedLimit > 0
+    ? Math.min(requestedLimit, SITEMAP_PAGE_SIZE)
+    : SITEMAP_PAGE_SIZE;
+  const offset = Number.isSafeInteger(requestedOffset) && requestedOffset > 0
+    ? requestedOffset
+    : 0;
+
+  try {
+    const eligible = sql`${artworks.imageAssetId} IS NOT NULL
+      AND ${artworks.localImageUrl} IS NOT NULL
+      AND ${artworks.localImageUrl} <> ''`;
+
+    const [totals] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(artworks)
+      .where(eligible);
+
+    const rows = await db
+      .select({ id: artworks.id })
+      .from(artworks)
+      .where(eligible)
+      .orderBy(artworks.id)
+      .limit(limit)
+      .offset(offset);
+
+    res.json({
+      success: true,
+      data: {
+        ids: rows.map((row) => row.id),
+        total: totals?.total ?? 0,
+        pageSize: SITEMAP_PAGE_SIZE,
+      },
+    });
+  } catch (error) {
+    console.error(
+      '[ARTWORK IDS] Request failed:',
+      error instanceof Error ? error.message : 'Unknown error',
+    );
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch artwork ids',
+    });
+  }
+});
+
 router.get('/:id', async (req, res) => {
   const artworkId = Number.parseInt(req.params.id, 10);
   if (!Number.isSafeInteger(artworkId) || artworkId <= 0) {
