@@ -264,6 +264,7 @@ export const artworks = createTable(
     objectBeginDate: integer("objectBeginDate"),
     objectEndDate: integer("objectEndDate"),
     creditLine: text("creditLine"),
+    accessionNumber: varchar("accessionNumber", { length: 100 }),
     classification: varchar("classification", { length: 500 }), // Increased from 200
     artistNationality: varchar("artistNationality", { length: 500 }), // Increased from 200
     primaryImageSmall: varchar("primaryImageSmall", { length: 1000 }),
@@ -281,6 +282,7 @@ export const artworks = createTable(
     importedAt: timestamp("importedAt", { withTimezone: true })
       .default(sql`CURRENT_TIMESTAMP`)
       .notNull(),
+    metMetadataFetchedAt: timestamp("metMetadataFetchedAt", { withTimezone: true }),
   },
   (table) => [
     index("idx_artworks_image_asset_id").on(table.imageAssetId),

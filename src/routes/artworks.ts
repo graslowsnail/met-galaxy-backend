@@ -27,6 +27,7 @@ type SampledArtwork = {
   culture?: string | null;
   medium?: string | null;
   creditLine: string | null;
+  accessionNumber?: string | null;
   description: string | null;
   localImageUrl: string;
   primaryImage: string | null;
@@ -48,6 +49,7 @@ const transformArtwork = (artwork: Omit<SampledArtwork, 'chunkKey' | 'position'>
   culture: artwork.culture ?? null,
   medium: artwork.medium ?? null,
   creditLine: artwork.creditLine,
+  accessionNumber: artwork.accessionNumber ?? null,
   description: artwork.description,
   imageUrl: getGraphImageUrl(artwork),
   originalImageUrl: getFullImageUrl(artwork),
@@ -670,11 +672,13 @@ router.get('/:id', async (req, res) => {
         culture: artworks.culture,
         medium: artworks.medium,
         creditLine: artworks.creditLine,
+        accessionNumber: artworks.accessionNumber,
         description: artworks.description,
         localImageUrl: artworks.localImageUrl,
         primaryImage: artworks.primaryImage,
         primaryImageSmall: artworks.primaryImageSmall,
         objectUrl: artworks.objectUrl,
+        metMetadataFetchedAt: artworks.metMetadataFetchedAt,
       })
       .from(artworks)
       .where(sql`${artworks.id} = ${artworkId}
@@ -690,16 +694,59 @@ router.get('/:id', async (req, res) => {
       });
     }
 
+    let enrichedArtwork = artwork;
+    if (!artwork.metMetadataFetchedAt) {
+      try {
+        const response = await fetch(
+          `https://collectionapi.metmuseum.org/public/collection/v1/objects/${artwork.objectId}`,
+          { signal: AbortSignal.timeout(5000) },
+        );
+        if (response.ok) {
+          const metArtwork = await response.json() as {
+            title?: string;
+            artistDisplayName?: string;
+            objectDate?: string;
+            department?: string;
+            culture?: string;
+            medium?: string;
+            creditLine?: string;
+            accessionNumber?: string;
+            objectURL?: string;
+          };
+          const updates: Partial<typeof artworks.$inferInsert> = {
+            metMetadataFetchedAt: new Date(),
+          };
+          if (!artwork.title?.trim() && metArtwork.title?.trim()) updates.title = metArtwork.title.trim();
+          if (!artwork.artist?.trim() && metArtwork.artistDisplayName?.trim()) updates.artist = metArtwork.artistDisplayName.trim();
+          if (!artwork.date?.trim() && metArtwork.objectDate?.trim()) updates.date = metArtwork.objectDate.trim();
+          if (!artwork.department?.trim() && metArtwork.department?.trim()) updates.department = metArtwork.department.trim();
+          if (!artwork.culture?.trim() && metArtwork.culture?.trim()) updates.culture = metArtwork.culture.trim();
+          if (!artwork.medium?.trim() && metArtwork.medium?.trim()) updates.medium = metArtwork.medium.trim();
+          if (!artwork.creditLine?.trim() && metArtwork.creditLine?.trim()) updates.creditLine = metArtwork.creditLine.trim();
+          if (!artwork.accessionNumber?.trim() && metArtwork.accessionNumber?.trim()) updates.accessionNumber = metArtwork.accessionNumber.trim();
+          if (!artwork.objectUrl?.trim() && metArtwork.objectURL?.trim()) updates.objectUrl = metArtwork.objectURL.trim();
+
+          await db.update(artworks).set(updates).where(sql`${artworks.id} = ${artworkId}`);
+          enrichedArtwork = { ...artwork, ...updates };
+        }
+      } catch (error) {
+        console.warn(
+          `[ARTWORK] The Met enrichment failed for object ${artwork.objectId}:`,
+          error instanceof Error ? error.message : 'Unknown error',
+        );
+      }
+    }
+
     res.json({
       success: true,
       data: {
-        ...transformArtwork({
-          ...artwork,
+          ...transformArtwork({
+          ...enrichedArtwork,
           imageAssetId: artwork.imageAssetId,
           localImageUrl: artwork.localImageUrl,
         }),
-        culture: artwork.culture,
-        medium: artwork.medium,
+        culture: enrichedArtwork.culture,
+        medium: enrichedArtwork.medium,
       },
     });
   } catch (error) {
