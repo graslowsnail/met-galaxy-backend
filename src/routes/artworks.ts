@@ -6,6 +6,9 @@ import { getFullImageUrl, getGraphImageUrl, getImageSource } from '../lib/imageU
 import { hash32 } from '../lib/fieldVectors.js';
 import { parseTimelineRange, timelineFilter, timelineYearSql, type TimelineRange } from '../lib/timeline.js';
 
+import { getTimelineSummary } from '../lib/timelineSummary.js';
+import { requestArtworkMetadata } from '../lib/artworkMetadata.js';
+
 const router = Router();
 let maxEligibleArtworkId: number | null = null;
 
@@ -206,39 +209,7 @@ router.get('/timeline-summary', async (req, res) => {
   const range = parseTimelineRange(req.query.fromYear, req.query.toYear);
   if (range === "invalid") return res.status(400).json({ success: false, error: 'Invalid timeline range' });
   try {
-    const rows = await db.execute(sql`
-      SELECT
-        MIN(${timelineYearSql()})::integer AS "minYear",
-        MAX(${timelineYearSql()})::integer AS "maxYear",
-        COUNT(*)::integer AS total,
-        COUNT(*) FILTER (WHERE ${range ? sql`${timelineYearSql()} BETWEEN ${range.fromYear} AND ${range.toYear}` : sql`TRUE`})::integer AS "selectedCount"
-      FROM "met-galaxy_artwork" artwork
-      WHERE ${timelineYearSql()} IS NOT NULL
-        AND ${timelineYearSql()} <= ${new Date().getUTCFullYear()}
-        AND artwork."imageAssetId" IS NOT NULL
-        AND artwork."localImageUrl" IS NOT NULL
-        AND artwork."localImageUrl" <> ''
-    `);
-    const buckets = await db.execute(sql`
-      SELECT bucket AS "fromYear", (
-        SELECT COUNT(*)::integer FROM "met-galaxy_artwork" artwork
-        WHERE ${timelineYearSql()} BETWEEN bucket AND bucket + 99
-          AND artwork."imageAssetId" IS NOT NULL AND artwork."localImageUrl" IS NOT NULL AND artwork."localImageUrl" <> ''
-      ) AS count
-      FROM generate_series(-10000, ${new Date().getUTCFullYear()}, 100) bucket
-      ORDER BY bucket
-    `);
-    const deepTimeBuckets = await db.execute(sql`
-      SELECT ${timelineYearSql()}::integer AS "fromYear", COUNT(*)::integer AS count
-      FROM "met-galaxy_artwork" artwork
-      WHERE ${timelineYearSql()} < -10000
-        AND artwork."imageAssetId" IS NOT NULL
-        AND artwork."localImageUrl" IS NOT NULL
-        AND artwork."localImageUrl" <> ''
-      GROUP BY ${timelineYearSql()}
-      ORDER BY "fromYear"
-    `);
-    res.json({ success: true, data: { ...Array.from(rows)[0], buckets: Array.from(buckets), deepTimeBuckets: Array.from(deepTimeBuckets) } });
+    res.json({ success: true, data: await getTimelineSummary(range) });
   } catch (error) {
     res.status(500).json({ success: false, error: 'Failed to load timeline summary' });
   }
@@ -694,60 +665,15 @@ router.get('/:id', async (req, res) => {
       });
     }
 
-    let enrichedArtwork = artwork;
-    if (!artwork.metMetadataFetchedAt) {
-      try {
-        const response = await fetch(
-          `https://collectionapi.metmuseum.org/public/collection/v1/objects/${artwork.objectId}`,
-          { signal: AbortSignal.timeout(5000) },
-        );
-        if (response.ok) {
-          const metArtwork = await response.json() as {
-            title?: string;
-            artistDisplayName?: string;
-            objectDate?: string;
-            department?: string;
-            culture?: string;
-            medium?: string;
-            creditLine?: string;
-            accessionNumber?: string;
-            objectURL?: string;
-          };
-          const updates: Partial<typeof artworks.$inferInsert> = {
-            metMetadataFetchedAt: new Date(),
-          };
-          if (!artwork.title?.trim() && metArtwork.title?.trim()) updates.title = metArtwork.title.trim();
-          if (!artwork.artist?.trim() && metArtwork.artistDisplayName?.trim()) updates.artist = metArtwork.artistDisplayName.trim();
-          if (!artwork.date?.trim() && metArtwork.objectDate?.trim()) updates.date = metArtwork.objectDate.trim();
-          if (!artwork.department?.trim() && metArtwork.department?.trim()) updates.department = metArtwork.department.trim();
-          if (!artwork.culture?.trim() && metArtwork.culture?.trim()) updates.culture = metArtwork.culture.trim();
-          if (!artwork.medium?.trim() && metArtwork.medium?.trim()) updates.medium = metArtwork.medium.trim();
-          if (!artwork.creditLine?.trim() && metArtwork.creditLine?.trim()) updates.creditLine = metArtwork.creditLine.trim();
-          if (!artwork.accessionNumber?.trim() && metArtwork.accessionNumber?.trim()) updates.accessionNumber = metArtwork.accessionNumber.trim();
-          if (!artwork.objectUrl?.trim() && metArtwork.objectURL?.trim()) updates.objectUrl = metArtwork.objectURL.trim();
-
-          await db.update(artworks).set(updates).where(sql`${artworks.id} = ${artworkId}`);
-          enrichedArtwork = { ...artwork, ...updates };
-        }
-      } catch (error) {
-        console.warn(
-          `[ARTWORK] The Met enrichment failed for object ${artwork.objectId}:`,
-          error instanceof Error ? error.message : 'Unknown error',
-        );
-      }
-    }
-
+    res.setHeader('Cache-Control', 'no-store');
     res.json({
       success: true,
-      data: {
-          ...transformArtwork({
-          ...enrichedArtwork,
-          imageAssetId: artwork.imageAssetId,
-          localImageUrl: artwork.localImageUrl,
-        }),
-        culture: enrichedArtwork.culture,
-        medium: enrichedArtwork.medium,
-      },
+      data: transformArtwork({
+        ...artwork,
+        imageAssetId: artwork.imageAssetId,
+        localImageUrl: artwork.localImageUrl,
+      }),
+      meta: requestArtworkMetadata(artwork),
     });
   } catch (error) {
     console.error(

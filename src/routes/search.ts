@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import OpenAI from "openai";
 import { db } from "../db/index.js";
 import { getFullImageUrl, getGraphImageUrl } from "../lib/imageUrls.js";
-import { parseTimelineRange, timelineYearSql } from "../lib/timeline.js";
+import { parseTimelineRange, timelineYearSql, type TimelineRange } from "../lib/timeline.js";
 
 const router = Router();
 
@@ -15,6 +15,13 @@ type CachedEmbedding = {
 type SearchCandidate = {
   id: number;
   imageAssetId: number;
+  timelineYear: number | null;
+  similarity: number;
+  exactMatch?: boolean;
+};
+
+type ArtworkDetails = {
+  id: number;
   objectId: number;
   title: string | null;
   artist: string | null;
@@ -27,8 +34,6 @@ type SearchCandidate = {
   localImageUrl: string;
   primaryImage: string | null;
   objectUrl: string | null;
-  similarity: number;
-  exactMatch?: boolean;
 };
 
 type SearchMode = "metadata" | "visual" | "keyword";
@@ -43,6 +48,10 @@ type RankedSearchResult = SearchCandidate & {
 
 const metadataEmbeddingCache = new Map<string, CachedEmbedding>();
 const visualEmbeddingCache = new Map<string, CachedEmbedding>();
+const pendingMetadataEmbeddings = new Map<string, Promise<EmbeddingResult>>();
+const pendingVisualEmbeddings = new Map<string, Promise<EmbeddingResult>>();
+type EmbeddingResult = { embedding: number[]; cacheHit: boolean };
+let metadataClient: OpenAI | undefined;
 const EMBEDDING_CACHE_TTL_MS = 30 * 60 * 1000;
 const MAX_EMBEDDING_CACHE_SIZE = 100;
 const METADATA_EMBEDDING_MODEL = "text-embedding-3-small";
@@ -89,20 +98,38 @@ async function embedMetadataQuery(
   text: string,
   apiKey: string,
 ): Promise<{ embedding: number[]; cacheHit: boolean }> {
-  const cached = getCachedEmbedding(metadataEmbeddingCache, text);
-  if (cached) {
-    return { embedding: cached, cacheHit: true };
-  }
-
-  const openai = new OpenAI({ apiKey });
-  const response = await openai.embeddings.create({
-    model: METADATA_EMBEDDING_MODEL,
-    input: text,
-    dimensions: METADATA_EMBEDDING_DIMENSIONS,
+  return getQueryEmbedding(metadataEmbeddingCache, pendingMetadataEmbeddings, text, async () => {
+    metadataClient ??= new OpenAI({ apiKey, timeout: 5000, maxRetries: 0 });
+    const response = await metadataClient.embeddings.create({
+      model: METADATA_EMBEDDING_MODEL,
+      input: text,
+      dimensions: METADATA_EMBEDDING_DIMENSIONS,
+    });
+    const embedding = response.data[0]?.embedding;
+    if (!embedding || embedding.length !== METADATA_EMBEDDING_DIMENSIONS
+      || embedding.some((value) => !Number.isFinite(value))) {
+      throw new Error("Metadata service returned an invalid embedding");
+    }
+    return embedding;
   });
-  const embedding = response.data[0]!.embedding;
-  cacheEmbedding(metadataEmbeddingCache, text, embedding);
-  return { embedding, cacheHit: false };
+}
+
+async function getQueryEmbedding(
+  cache: Map<string, CachedEmbedding>,
+  pending: Map<string, Promise<EmbeddingResult>>,
+  text: string,
+  create: () => Promise<number[]>,
+): Promise<EmbeddingResult> {
+  const cached = getCachedEmbedding(cache, text);
+  if (cached) return { embedding: cached, cacheHit: true };
+  const existing = pending.get(text);
+  if (existing) return existing;
+  const request = create().then((embedding) => {
+    cacheEmbedding(cache, text, embedding);
+    return { embedding, cacheHit: false };
+  }).finally(() => pending.delete(text));
+  pending.set(text, request);
+  return request;
 }
 
 async function embedVisualQuery(
@@ -110,50 +137,45 @@ async function embedVisualQuery(
   serviceUrl: string,
   authToken: string | undefined,
 ): Promise<{ embedding: number[]; cacheHit: boolean }> {
-  const cached = getCachedEmbedding(visualEmbeddingCache, text);
-  if (cached) {
-    return { embedding: cached, cacheHit: true };
-  }
+  return getQueryEmbedding(visualEmbeddingCache, pendingVisualEmbeddings, text, async () => {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+    if (authToken) {
+      headers.Authorization = `Bearer ${authToken}`;
+    }
 
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-  };
-  if (authToken) {
-    headers.Authorization = `Bearer ${authToken}`;
-  }
+    const response = await fetch(new URL("/embed", serviceUrl), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ text }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      throw new Error(`OpenCLIP text service returned ${response.status}`);
+    }
 
-  const response = await fetch(new URL("/embed", serviceUrl), {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ text }),
-    signal: AbortSignal.timeout(5000),
+    const payload = (await response.json()) as {
+      embedding?: unknown;
+      dimensions?: unknown;
+      model?: unknown;
+      pretrained?: unknown;
+    };
+    if (
+      payload.model !== VISUAL_EMBEDDING_MODEL
+      || payload.pretrained !== VISUAL_EMBEDDING_PRETRAINED
+      || payload.dimensions !== VISUAL_EMBEDDING_DIMENSIONS
+      || !Array.isArray(payload.embedding)
+      || payload.embedding.length !== VISUAL_EMBEDDING_DIMENSIONS
+      || payload.embedding.some(
+        (value) => typeof value !== "number" || !Number.isFinite(value),
+      )
+    ) {
+      throw new Error("OpenCLIP text service returned an invalid embedding");
+    }
+
+    return payload.embedding as number[];
   });
-  if (!response.ok) {
-    throw new Error(`OpenCLIP text service returned ${response.status}`);
-  }
-
-  const payload = (await response.json()) as {
-    embedding?: unknown;
-    dimensions?: unknown;
-    model?: unknown;
-    pretrained?: unknown;
-  };
-  if (
-    payload.model !== VISUAL_EMBEDDING_MODEL
-    || payload.pretrained !== VISUAL_EMBEDDING_PRETRAINED
-    || payload.dimensions !== VISUAL_EMBEDDING_DIMENSIONS
-    || !Array.isArray(payload.embedding)
-    || payload.embedding.length !== VISUAL_EMBEDDING_DIMENSIONS
-    || payload.embedding.some(
-      (value) => typeof value !== "number" || !Number.isFinite(value),
-    )
-  ) {
-    throw new Error("OpenCLIP text service returned an invalid embedding");
-  }
-
-  const embedding = payload.embedding as number[];
-  cacheEmbedding(visualEmbeddingCache, text, embedding);
-  return { embedding, cacheHit: false };
 }
 
 function parseNumber(
@@ -203,27 +225,18 @@ async function metadataSearch(
 ): Promise<SearchCandidate[]> {
   const vector = `[${embedding.join(",")}]`;
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SET LOCAL hnsw.ef_search = 100`);
-    await tx.execute(sql`SET LOCAL hnsw.iterative_scan = 'strict_order'`);
-    await tx.execute(sql`SET LOCAL hnsw.max_scan_tuples = 50000`);
-    await tx.execute(sql`SET LOCAL enable_sort = off`);
+    await tx.execute(sql`SELECT
+      set_config('hnsw.ef_search', '100', true),
+      set_config('hnsw.iterative_scan', 'strict_order', true),
+      set_config('hnsw.max_scan_tuples', '50000', true),
+      set_config('enable_sort', 'off', true)
+    `);
     const rows = await tx.execute(sql`
       WITH nearest AS MATERIALIZED (
         SELECT
           artwork.id,
           artwork."imageAssetId",
-          artwork."objectId",
-          artwork.title,
-          artwork.artist,
-          artwork.date,
-          artwork.department,
-          artwork.culture,
-          artwork.medium,
-          artwork."creditLine",
-          artwork.description,
-          artwork."localImageUrl",
-          artwork."primaryImage",
-          artwork."objectUrl",
+          ${timelineYearSql()} AS "timelineYear",
           artwork."txtVec" <=> ${vector}::vector AS distance
         FROM "met-galaxy_artwork" artwork
         WHERE artwork."imageAssetId" IS NOT NULL
@@ -243,18 +256,7 @@ async function metadataSearch(
       SELECT
         id,
         "imageAssetId",
-        "objectId",
-        title,
-        artist,
-        date,
-        department,
-        culture,
-        medium,
-        "creditLine",
-        description,
-        "localImageUrl",
-        "primaryImage",
-        "objectUrl",
+        "timelineYear",
         1 - distance AS similarity
       FROM canonical
       ORDER BY distance, id
@@ -270,10 +272,12 @@ async function visualSearch(
 ): Promise<SearchCandidate[]> {
   const vector = `[${embedding.join(",")}]`;
   return db.transaction(async (tx) => {
-    await tx.execute(sql`SET LOCAL hnsw.ef_search = 100`);
-    await tx.execute(sql`SET LOCAL hnsw.iterative_scan = 'strict_order'`);
-    await tx.execute(sql`SET LOCAL hnsw.max_scan_tuples = 50000`);
-    await tx.execute(sql`SET LOCAL enable_seqscan = off`);
+    await tx.execute(sql`SELECT
+      set_config('hnsw.ef_search', '100', true),
+      set_config('hnsw.iterative_scan', 'strict_order', true),
+      set_config('hnsw.max_scan_tuples', '50000', true),
+      set_config('enable_seqscan', 'off', true)
+    `);
     const rows = await tx.execute(sql`
       WITH nearest AS MATERIALIZED (
         SELECT
@@ -291,22 +295,11 @@ async function visualSearch(
       SELECT
         artwork.id,
         nearest."imageAssetId",
-        artwork."objectId",
-        artwork.title,
-        artwork.artist,
-        artwork.date,
-        artwork.department,
-        artwork.culture,
-        artwork.medium,
-        artwork."creditLine",
-        artwork.description,
-        artwork."localImageUrl",
-        artwork."primaryImage",
-        artwork."objectUrl",
+        artwork."timelineYear",
         1 - nearest.distance AS similarity
       FROM nearest
       CROSS JOIN LATERAL (
-        SELECT artwork.*
+        SELECT artwork.id, ${timelineYearSql()} AS "timelineYear"
         FROM "met-galaxy_artwork" artwork
         WHERE artwork."imageAssetId" = nearest."imageAssetId"
           AND artwork."localImageUrl" IS NOT NULL
@@ -339,18 +332,7 @@ async function keywordSearch(
       SELECT
         artwork.id,
         artwork."imageAssetId",
-        artwork."objectId",
-        artwork.title,
-        artwork.artist,
-        artwork.date,
-        artwork.department,
-        artwork.culture,
-        artwork.medium,
-        artwork."creditLine",
-        artwork.description,
-        artwork."localImageUrl",
-        artwork."primaryImage",
-        artwork."objectUrl",
+        ${timelineYearSql()} AS "timelineYear",
         COALESCE(
           (
             lower(artwork.title) = lower(${query})
@@ -413,18 +395,7 @@ async function keywordSearch(
     SELECT
       id,
       "imageAssetId",
-      "objectId",
-      title,
-      artist,
-      date,
-      department,
-      culture,
-      medium,
-      "creditLine",
-      description,
-      "localImageUrl",
-      "primaryImage",
-      "objectUrl",
+      "timelineYear",
       "exactMatch",
       relevance AS similarity
     FROM canonical
@@ -487,6 +458,202 @@ function fuseRankings(
   );
 }
 
+type SearchWeights = Record<SearchMode, number>;
+type SearchSnapshot = {
+  results: RankedSearchResult[];
+  details: Map<number, ArtworkDetails>;
+  pendingDetails: Map<string, Promise<void>>;
+  candidateLimit: number;
+  canExpand: boolean;
+  expiresAt: number;
+  availableModes: SearchMode[];
+  degradedModes: SearchMode[];
+  modeErrors: Partial<Record<SearchMode, string>>;
+  embeddingCache: { metadata: boolean; visual: boolean };
+  timing: { embed: number; search: number; fusion: number };
+};
+
+const searchCache = new Map<string, SearchSnapshot>();
+const pendingSearches = new Map<string, Promise<SearchSnapshot>>();
+const MAX_SEARCH_CANDIDATES = 5000;
+const SEARCH_CACHE_TTL_MS = 5 * 60 * 1000;
+const DEGRADED_CACHE_TTL_MS = 10000;
+const MAX_SEARCH_CACHE_ENTRIES = 32;
+const MAX_CACHED_RESULTS = 30000;
+
+async function rankSearch(
+  query: string,
+  weights: SearchWeights,
+  rrfK: number,
+  range: TimelineRange | null,
+  candidateLimit: number,
+): Promise<SearchSnapshot> {
+  const modeErrors: Partial<Record<SearchMode, string>> = {};
+  const embeddingCache = { metadata: false, visual: false };
+  const timing = { embed: 0, search: 0, fusion: 0 };
+  const recordError = (mode: SearchMode, stage: string, error: unknown) => {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    modeErrors[mode] = `${stage}: ${message}`;
+    console.error(`[SEARCH] ${mode} ${stage} failed: ${message}`);
+  };
+  const search = async (mode: SearchMode, run: () => Promise<SearchCandidate[]>) => {
+    const startedAt = Date.now();
+    try {
+      return await run();
+    } catch (error) {
+      recordError(mode, "search", error);
+      return [];
+    } finally {
+      timing.search = Math.max(timing.search, Date.now() - startedAt);
+    }
+  };
+  const semanticSearch = async (mode: "metadata" | "visual"): Promise<SearchCandidate[]> => {
+    if (weights[mode] <= 0) return [];
+    const configuration = mode === "metadata"
+      ? process.env.OPENAI_API_KEY : process.env.OPENCLIP_TEXT_EMBEDDING_URL;
+    if (!configuration) {
+      modeErrors[mode] = `configuration: ${mode === "metadata" ? "OPENAI_API_KEY" : "OPENCLIP_TEXT_EMBEDDING_URL"} is not configured`;
+      return [];
+    }
+    const startedAt = Date.now();
+    let embedded: EmbeddingResult;
+    try {
+      embedded = mode === "metadata"
+        ? await embedMetadataQuery(query, configuration)
+        : await embedVisualQuery(query, configuration, process.env.OPENCLIP_TEXT_AUTH_TOKEN);
+      embeddingCache[mode] = embedded.cacheHit;
+    } catch (error) {
+      recordError(mode, "embedding", error);
+      return [];
+    } finally {
+      timing.embed = Math.max(timing.embed, Date.now() - startedAt);
+    }
+    return search(mode, () => mode === "metadata"
+      ? metadataSearch(embedded.embedding, candidateLimit)
+      : visualSearch(embedded.embedding, candidateLimit));
+  };
+
+  const [metadata, visual, keyword] = await Promise.all([
+    semanticSearch("metadata"),
+    semanticSearch("visual"),
+    weights.keyword > 0 ? search("keyword", () => keywordSearch(query, candidateLimit)) : [],
+  ]);
+  const rankings = [
+    { mode: "metadata" as const, weight: weights.metadata, results: metadata },
+    { mode: "visual" as const, weight: weights.visual, results: visual },
+    { mode: "keyword" as const, weight: weights.keyword, results: keyword },
+  ].filter((ranking) => ranking.weight > 0 && ranking.results.length > 0);
+  const fusionStartedAt = Date.now();
+  let results = fuseRankings(rankings, rrfK);
+  if (range) results = results.filter((item) => item.timelineYear !== null
+    && item.timelineYear >= range.fromYear && item.timelineYear <= range.toYear);
+  timing.fusion = Date.now() - fusionStartedAt;
+  const degradedModes = (Object.keys(weights) as SearchMode[])
+    .filter((mode) => modeErrors[mode] !== undefined);
+  return {
+    results,
+    details: new Map(),
+    pendingDetails: new Map(),
+    candidateLimit,
+    canExpand: candidateLimit < MAX_SEARCH_CANDIDATES
+      && rankings.some((ranking) => ranking.results.length === candidateLimit),
+    expiresAt: Date.now() + (degradedModes.length ? DEGRADED_CACHE_TTL_MS : SEARCH_CACHE_TTL_MS),
+    availableModes: rankings.map((ranking) => ranking.mode),
+    degradedModes,
+    modeErrors,
+    embeddingCache,
+    timing,
+  };
+}
+
+function cacheSearch(signature: string, snapshot: SearchSnapshot) {
+  const now = Date.now();
+  for (const [key, entry] of searchCache) {
+    if (entry.expiresAt <= now) searchCache.delete(key);
+  }
+  // Do not let a service outage turn into a long-lived empty search result.
+  if (snapshot.results.length === 0 && snapshot.degradedModes.length > 0) return;
+  searchCache.delete(signature);
+  searchCache.set(signature, snapshot);
+  let resultCount = [...searchCache.values()].reduce((sum, entry) => sum + entry.results.length, 0);
+  while (searchCache.size > MAX_SEARCH_CACHE_ENTRIES || resultCount > MAX_CACHED_RESULTS) {
+    const oldestKey = searchCache.keys().next().value!;
+    resultCount -= searchCache.get(oldestKey)!.results.length;
+    searchCache.delete(oldestKey);
+  }
+}
+
+async function getSearchSnapshot(
+  signature: string,
+  required: number,
+  initialLimit: number,
+  compute: (limit: number) => Promise<SearchSnapshot>,
+) {
+  let snapshot = searchCache.get(signature);
+  if (snapshot && snapshot.expiresAt <= Date.now()) {
+    searchCache.delete(signature);
+    snapshot = undefined;
+  }
+  let computed = false;
+  while (!snapshot || (snapshot.results.length < required && snapshot.canExpand)) {
+    const existing = pendingSearches.get(signature);
+    if (existing) {
+      snapshot = await existing;
+      continue;
+    }
+    const previous = snapshot;
+    const limit = previous
+      ? Math.min(Math.max(previous.candidateLimit * 2, initialLimit), MAX_SEARCH_CANDIDATES)
+      : initialLimit;
+    const request = compute(limit).then((next) => {
+      if (previous) {
+        // Keep the existing order when extending a pool so later pages cannot repeat earlier tiles.
+        const seen = new Set(previous.results.map((item) => item.imageAssetId));
+        next.results = [...previous.results, ...next.results.filter((item) => !seen.has(item.imageAssetId))];
+        next.details = previous.details;
+        next.pendingDetails = previous.pendingDetails;
+        next.expiresAt = Math.min(next.expiresAt, previous.expiresAt);
+      }
+      cacheSearch(signature, next);
+      return next;
+    }).finally(() => pendingSearches.delete(signature));
+    pendingSearches.set(signature, request);
+    snapshot = await request;
+    computed = true;
+  }
+  if (searchCache.has(signature)) {
+    searchCache.delete(signature);
+    searchCache.set(signature, snapshot);
+  }
+  return { snapshot, cacheHit: !computed };
+}
+
+async function hydratePage(snapshot: SearchSnapshot, page: RankedSearchResult[]) {
+  const missing = page.filter((item) => !snapshot.details.has(item.id));
+  if (missing.length > 0) {
+    const key = missing.map((item) => item.id).join(",");
+    let request = snapshot.pendingDetails.get(key);
+    if (!request) {
+      request = db.execute(sql`
+        SELECT artwork.id, artwork."objectId", artwork.title, artwork.artist,
+          artwork.date, artwork.department, artwork.culture, artwork.medium,
+          artwork."creditLine", artwork.description, artwork."localImageUrl",
+          artwork."primaryImage", artwork."objectUrl"
+        FROM "met-galaxy_artwork" artwork
+        WHERE artwork.id IN (${sql.join(missing.map((item) => sql`${item.id}`), sql`, `)})
+      `).then((rows) => {
+        for (const row of Array.from(rows) as ArtworkDetails[]) snapshot.details.set(row.id, row);
+      }).finally(() => snapshot.pendingDetails.delete(key));
+      snapshot.pendingDetails.set(key, request);
+    }
+    await request;
+  }
+  return page.flatMap((item) => {
+    const details = snapshot.details.get(item.id);
+    return details ? [{ ...details, ...item }] : [];
+  });
+}
+
 router.get("/search", async (req, res) => {
   const startedAt = Date.now();
   try {
@@ -538,103 +705,19 @@ router.get("/search", async (req, res) => {
       Math.max((offset + count + 1) * 4, 200),
       5000,
     );
-    const openaiApiKey = process.env.OPENAI_API_KEY;
-    const visualServiceUrl = process.env.OPENCLIP_TEXT_EMBEDDING_URL;
-    const modeErrors: Partial<Record<SearchMode, string>> = {};
-    const recordModeError = (
-      mode: SearchMode,
-      stage: string,
-      error: unknown,
-    ): void => {
-      const message = error instanceof Error ? error.message : "Unknown error";
-      modeErrors[mode] = `${stage}: ${message}`;
-      console.error(`[SEARCH] ${mode} ${stage} failed: ${message}`);
-    };
-    if (weights.metadata > 0 && !openaiApiKey) {
-      modeErrors.metadata = "configuration: OPENAI_API_KEY is not configured";
-    }
-    if (weights.visual > 0 && !visualServiceUrl) {
-      modeErrors.visual =
-        "configuration: OPENCLIP_TEXT_EMBEDDING_URL is not configured";
-    }
-    const embedStartedAt = Date.now();
-    const [metadataEmbedding, visualEmbedding] = await Promise.all([
-      openaiApiKey && weights.metadata > 0
-        ? embedMetadataQuery(query, openaiApiKey).catch((error) => {
-            recordModeError("metadata", "embedding", error);
-            return null;
-          })
-        : Promise.resolve(null),
-      visualServiceUrl && weights.visual > 0
-        ? embedVisualQuery(
-            query,
-            visualServiceUrl,
-            process.env.OPENCLIP_TEXT_AUTH_TOKEN,
-          ).catch((error) => {
-            recordModeError("visual", "embedding", error);
-            return null;
-          })
-        : Promise.resolve(null),
-    ]);
-    const embedTime = Date.now() - embedStartedAt;
-
-    const searchStartedAt = Date.now();
-    const [metadataResults, visualResults, keywordResults] =
-      await Promise.all([
-        metadataEmbedding
-          ? metadataSearch(metadataEmbedding.embedding, candidateLimit)
-              .catch((error) => {
-                recordModeError("metadata", "search", error);
-                return [];
-              })
-          : Promise.resolve([]),
-        visualEmbedding
-          ? visualSearch(visualEmbedding.embedding, candidateLimit)
-              .catch((error) => {
-                recordModeError("visual", "search", error);
-                return [];
-              })
-          : Promise.resolve([]),
-        weights.keyword > 0
-          ? keywordSearch(query, candidateLimit).catch((error) => {
-              recordModeError("keyword", "search", error);
-              return [];
-            })
-          : Promise.resolve([]),
-      ]);
-    const searchTime = Date.now() - searchStartedAt;
-
-    const rankings = [
-      {
-        mode: "metadata" as const,
-        weight: weights.metadata,
-        results: metadataResults,
-      },
-      {
-        mode: "visual" as const,
-        weight: weights.visual,
-        results: visualResults,
-      },
-      {
-        mode: "keyword" as const,
-        weight: weights.keyword,
-        results: keywordResults,
-      },
-    ].filter((ranking) => ranking.weight > 0 && ranking.results.length > 0);
-    const fusionStartedAt = Date.now();
-    let fused = fuseRankings(rankings, rrfK);
-    if (range && fused.length > 0) {
-      const allowed = await db.execute(sql`
-        SELECT id FROM "met-galaxy_artwork"
-        WHERE id IN (${sql.join(fused.map((item) => sql`${item.id}`), sql`, `)})
-          AND ${timelineYearSql('"met-galaxy_artwork"')} BETWEEN ${range.fromYear} AND ${range.toYear}
-      `);
-      const allowedIds = new Set(Array.from(allowed).map((row) => Number(row.id)));
-      fused = fused.filter((item) => allowedIds.has(item.id));
-    }
-    const page = fused.slice(offset, offset + count);
-    const hasMore = fused.length > offset + count;
-    const fusionTime = Date.now() - fusionStartedAt;
+    const { snapshot, cacheHit } = await getSearchSnapshot(
+      JSON.stringify({ signature, count }), offset + count + 1, candidateLimit,
+      (limit) => rankSearch(query, weights, rrfK, range, limit),
+    );
+    if (res.destroyed) return;
+    const rankedPage = snapshot.results.slice(offset, offset + count);
+    const hydrateStartedAt = Date.now();
+    const page = await hydratePage(snapshot, rankedPage);
+    const hydrateTime = Date.now() - hydrateStartedAt;
+    const hasMore = snapshot.results.length > offset + count;
+    const { availableModes, degradedModes, modeErrors } = snapshot;
+    const { embed: embedTime, search: searchTime, fusion: fusionTime } = cacheHit
+      ? { embed: 0, search: 0, fusion: 0 } : snapshot.timing;
 
     const data = page.map((artwork) => {
       const semanticSimilarities = [
@@ -674,12 +757,6 @@ router.get("/search", async (req, res) => {
       };
     });
 
-    const availableModes = rankings.map((ranking) => ranking.mode);
-    const requestedModes = (Object.keys(weights) as SearchMode[])
-      .filter((mode) => weights[mode] > 0);
-    const degradedModes = requestedModes.filter(
-      (mode) => modeErrors[mode] !== undefined,
-    );
     const totalTime = Date.now() - startedAt;
     console.log(
       `[SEARCH] q="${query.slice(0, 100)}" offset=${offset}`
@@ -696,7 +773,7 @@ router.get("/search", async (req, res) => {
         count: data.length,
         hasMore,
         nextCursor: hasMore
-          ? encodeCursor(offset + data.length, signature)
+          ? encodeCursor(offset + rankedPage.length, signature)
           : null,
         weights,
         rrfK,
@@ -715,13 +792,14 @@ router.get("/search", async (req, res) => {
         degradedModes,
         modeErrors,
         cache: {
-          metadata: metadataEmbedding?.cacheHit ?? false,
-          visual: visualEmbedding?.cacheHit ?? false,
+          ...snapshot.embeddingCache,
+          results: cacheHit,
         },
         timing: {
           embed: `${embedTime}ms`,
           search: `${searchTime}ms`,
           fusion: `${fusionTime}ms`,
+          hydrate: `${hydrateTime}ms`,
           total: `${totalTime}ms`,
         },
       },

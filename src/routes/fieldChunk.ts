@@ -35,10 +35,12 @@ const getCanonicalSimilarityPool = async (
   excludedIds: number[],
   range: TimelineRange | null = null,
 ) => db.transaction(async (tx) => {
-  await tx.execute(sql`SET LOCAL hnsw.ef_search = 100`);
-  await tx.execute(sql`SET LOCAL hnsw.iterative_scan = 'strict_order'`);
-  await tx.execute(sql`SET LOCAL hnsw.max_scan_tuples = 50000`);
-  await tx.execute(sql`SET LOCAL enable_seqscan = off`);
+  await tx.execute(sql`SELECT
+    set_config('hnsw.ef_search', '100', true),
+    set_config('hnsw.iterative_scan', 'strict_order', true),
+    set_config('hnsw.max_scan_tuples', '50000', true),
+    set_config('enable_seqscan', 'off', true)
+  `);
   const rows = await tx.execute(sql`
     WITH nearest AS MATERIALIZED (
       SELECT
@@ -355,6 +357,7 @@ router.post("/field-chunks", async (req, res) => {
       });
     };
 
+    if (res.destroyed) return;
     const v = normalize(Float32Array.from(target.imgVec as number[]));
     const d = v.length;
 
@@ -412,27 +415,35 @@ router.post("/field-chunks", async (req, res) => {
       drift: CanonicalPoolArtwork[];
       random: CanonicalPoolArtwork[];
     }>();
+    const loadChunkPools = async (prepared: typeof preparedChunks[number]) => {
+      const key = `${prepared.chunk.x},${prepared.chunk.y}`;
+      const cached = pools.get(key);
+      if (cached) return cached;
+      if (res.destroyed) return { drift: [], random: [] };
+
+      const drift = await getCanonicalSimilarityPool(
+        prepared.vector, target.imageAssetId!, perChunkPoolLimit, excludedIds, range,
+      );
+      const random = res.destroyed ? [] : await getCanonicalRandomPool(
+        prepared.seed, target.imageAssetId!, perChunkPoolLimit, excludedIds, range,
+      );
+      const result = { drift, random };
+      pools.set(key, result);
+      return result;
+    };
     let nextPoolIndex = 0;
     const poolWorkers = Array.from(
       { length: Math.min(6, preparedChunks.length) },
       async () => {
-        while (nextPoolIndex < preparedChunks.length) {
-          const prepared = preparedChunks[nextPoolIndex++];
-          const drift = await getCanonicalSimilarityPool(
-            prepared.vector,
-            target.imageAssetId!,
-            perChunkPoolLimit,
-            excludedIds,
-            range,
-          );
-          const random = await getCanonicalRandomPool(
-            prepared.seed,
-            target.imageAssetId!,
-            perChunkPoolLimit,
-            excludedIds,
-            range,
-          );
-          pools.set(`${prepared.chunk.x},${prepared.chunk.y}`, { drift, random });
+        while (nextPoolIndex < preparedChunks.length && !res.destroyed) {
+          const chunkIndex = nextPoolIndex++;
+          const prepared = preparedChunks[chunkIndex];
+          if (prepared.t === 0) {
+            const sharedPool = await globalSimTightPromise;
+            // Near chunks are sorted first; only uncovered chunks need fallbacks.
+            if ((chunkIndex + 1) * actualCount <= sharedPool.length) continue;
+          }
+          await loadChunkPools(prepared);
         }
       },
     );
@@ -440,6 +451,7 @@ router.post("/field-chunks", async (req, res) => {
       globalSimTightPromise,
       Promise.all(poolWorkers),
     ]);
+    if (res.destroyed) return;
 
     const results: Record<string, any> = {};
     const overallT = chunks.reduce((sum, chunk) => sum + smoothstep(1.5, 12.0, Math.hypot(chunk.x, chunk.y)), 0) / chunks.length;
@@ -449,9 +461,7 @@ router.post("/field-chunks", async (req, res) => {
       const chunk = prepared.chunk;
       const { x: chunkX, y: chunkY } = chunk;
       const { r, t, theta, rng } = prepared;
-      const chunkPools = pools.get(`${chunkX},${chunkY}`)!;
-      const chunkSimDrift = chunkPools.drift;
-      const chunkRandPool = chunkPools.random;
+      let chunkPools = pools.get(`${chunkX},${chunkY}`);
 
       // Enhanced spatial partitioning for better deduplication
       const getSpatialOffset = (cx: number, cy: number, globalSd: number, chIdx: number) => {
@@ -466,8 +476,9 @@ router.post("/field-chunks", async (req, res) => {
 
       // Apply spatial offset to pools
       const simTightQ = globalSimTight.slice(spatialOffset).concat(globalSimTight.slice(0, spatialOffset)).map(x => ({...x, source: 'sim'}));
-      const simDriftQ = chunkSimDrift.slice(spatialOffset).concat(chunkSimDrift.slice(0, spatialOffset)).map(x => ({...x, source: 'drift'}));
-      const randQ = chunkRandPool.map(x => ({...x, source: 'rand'}));
+      const driftPool = chunkPools?.drift ?? [];
+      const simDriftQ = driftPool.slice(spatialOffset).concat(driftPool.slice(0, spatialOffset)).map(x => ({...x, source: 'drift'}));
+      const randQ = (chunkPools?.random ?? []).map(x => ({...x, source: 'rand'}));
 
       // Calculate weights
       const wSim = (1 - t) * (1 - t);
@@ -503,6 +514,14 @@ router.post("/field-chunks", async (req, res) => {
         if (choice === 'sim') cand = takeNext(simTightQ) || takeNext(simDriftQ) || takeNext(randQ);
         else if (choice === 'drift') cand = takeNext(simDriftQ) || takeNext(simTightQ) || takeNext(randQ);
         else cand = takeNext(randQ) || takeNext(simDriftQ) || takeNext(simTightQ);
+
+        if (!cand && !chunkPools) {
+          chunkPools = await loadChunkPools(prepared);
+          if (res.destroyed) return;
+          simDriftQ.push(...chunkPools.drift.slice(spatialOffset).concat(chunkPools.drift.slice(0, spatialOffset)).map(x => ({...x, source: 'drift'})));
+          randQ.push(...chunkPools.random.map(x => ({...x, source: 'rand'})));
+          cand = takeNext(simDriftQ) || takeNext(randQ);
+        }
         
         if (!cand) break;
         
